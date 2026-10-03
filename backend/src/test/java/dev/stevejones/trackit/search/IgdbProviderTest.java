@@ -15,6 +15,7 @@ import dev.stevejones.trackit.media.MediaType;
 import dev.stevejones.trackit.media.MetadataSource;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -176,6 +177,47 @@ class IgdbProviderTest {
                 .hasMessageContaining("not configured");
 
         strict.verify();
+    }
+
+    @Test
+    void asksForEverySeedInOneRequestAndKeepsThemApart() throws IOException {
+        expectTokenCall();
+        server.expect(ExpectedCount.once(), requestTo("https://api.igdb.com/v4/games"))
+                .andExpect(method(HttpMethod.POST))
+                // One request covering both seeds, which is why the interface
+                // takes a batch: TMDB cannot do this.
+                .andExpect(content().string(Matchers.containsString("where id = (119133,1942)")))
+                .andExpect(content().string(Matchers.containsString("similar_games.cover.image_id")))
+                .andRespond(withSuccess(fixture("igdb-similar.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        Map<String, List<SearchResult>> bySeed =
+                provider.recommendationsFor(MediaType.GAME, List.of("119133", "1942"));
+
+        // The third fixture row has no similar_games and is left out entirely.
+        assertThat(bySeed).containsOnlyKeys("119133", "1942");
+        assertThat(bySeed.get("119133")).hasSize(2);
+        assertThat(bySeed.get("1942")).hasSize(2);
+
+        SearchResult darkSouls = bySeed.get("119133").get(0);
+        assertThat(darkSouls.externalId()).isEqualTo("2155");
+        assertThat(darkSouls.title()).isEqualTo("Dark Souls");
+        assertThat(darkSouls.releaseYear()).isEqualTo(2011);
+        assertThat(darkSouls.posterUrl())
+                .isEqualTo("https://images.igdb.com/igdb/image/upload/t_cover_big/co2uro.jpg");
+        assertThat(darkSouls.mediaType()).isEqualTo(MediaType.GAME);
+
+        // A game with no cover keeps a null poster rather than a broken URL.
+        assertThat(bySeed.get("1942").get(1).title()).isEqualTo("Control");
+        assertThat(bySeed.get("1942").get(1).posterUrl()).isNull();
+
+        server.verify();
+    }
+
+    @Test
+    void makesNoRequestWhenEverySeedIdIsUnusable() {
+        assertThat(provider.recommendationsFor(MediaType.GAME, List.of("not-an-id", "1; drop"))).isEmpty();
+        server.verify();
     }
 
     @Test

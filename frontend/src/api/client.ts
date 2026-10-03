@@ -6,6 +6,7 @@ import type {
   EntryPage,
   EntryStatus,
   MediaType,
+  Recommendations,
   SearchResult,
   Stats,
   UpdateEntryPayload,
@@ -118,4 +119,9 @@ export const api = {
     request<SearchResult[]>(`/search?q=${encodeURIComponent(query)}&type=${type.toLowerCase()}`),
 
   stats: () => request<Stats>('/stats'),
+
+  recommendations: (type: MediaType, refresh = false) =>
+    request<Recommendations>(
+      `/recommendations?type=${type.toLowerCase()}${refresh ? '&refresh=true' : ''}`,
+    ),
 };

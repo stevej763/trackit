@@ -4,6 +4,7 @@ import { AuthProvider } from './auth/AuthProvider';
 import RequireAuth from './auth/RequireAuth';
 import AppShell from './components/AppShell';
 import AddPage from './pages/AddPage';
+import ForYouPage from './pages/ForYouPage';
 import ItemPage from './pages/ItemPage';
 import LibraryPage from './pages/LibraryPage';
 import SignInPage from './pages/SignInPage';
@@ -32,6 +33,7 @@ export default function App() {
               <Route element={<AppShell />}>
                 <Route path="/" element={<LibraryPage />} />
                 <Route path="/add" element={<AddPage />} />
+                <Route path="/for-you" element={<ForYouPage />} />
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/item/:id" element={<ItemPage />} />
               </Route>

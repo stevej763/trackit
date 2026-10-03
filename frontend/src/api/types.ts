@@ -79,6 +79,33 @@ export interface Stats {
   averageRatingByMediaType: TypeAverage[];
 }
 
+export interface Recommendation {
+  source: MetadataSource;
+  mediaType: MediaType;
+  externalId: string;
+  title: string;
+  releaseYear: number | null;
+  overview: string | null;
+  posterUrl: string | null;
+  /** The best-scored title of yours that pointed at this one. */
+  becauseOfTitle: string;
+  becauseOfRating: number;
+  /** How many of your seeds pointed here. More is a stronger signal. */
+  seedMatches: number;
+}
+
+export interface Recommendations {
+  mediaType: MediaType;
+  items: Recommendation[];
+  /** Provider-backed, well-scored titles the suggestions were built from. */
+  seedCount: number;
+  /** Scored titles of this type however they were added. */
+  ratedCount: number;
+  minimumSeedRating: number;
+  computedAt: string;
+  fromCache: boolean;
+}
+
 export interface ApiErrorBody {
   error: string;
   message: string;

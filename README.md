@@ -54,6 +54,11 @@ Both are free. TMDB covers films and TV; IGDB covers games.
 - **Filter and sort.** By type, status, minimum score or title, sorted by date
   added, title, score, finish date or release year. The filters live in the URL,
   so any view can be bookmarked.
+- **Suggestions, with reasons.** The **For you** page builds a list from the
+  titles you scored 7 or higher, and says which of them each suggestion came
+  from. Score a couple of things you love and it fills up; things you already
+  track never show up. Needs the API keys below, and titles added by search —
+  hand-typed entries have nothing to match on.
 - **Stats.** Counts by type and status, how your scores are distributed, and what
   you finished each month over the last year.
 
@@ -63,7 +68,7 @@ cache and nothing else.
 ## Running the tests
 
 ```sh
-docker compose run --rm api-test          # backend: 42 tests, no local Java needed
+docker compose run --rm api-test          # backend: 65 tests, no local Java needed
 cd frontend && npm install && npm test    # frontend: Vitest + React Testing Library
 cd frontend && npm run lint && npm run build
 ```

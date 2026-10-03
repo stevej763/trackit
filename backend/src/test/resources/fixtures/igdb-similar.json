@@ -1,0 +1,42 @@
+[
+  {
+    "id": 119133,
+    "similar_games": [
+      {
+        "id": 2155,
+        "name": "Dark Souls",
+        "summary": "An action RPG set in Lordran.",
+        "first_release_date": 1316563200,
+        "cover": { "id": 1, "image_id": "co2uro" }
+      },
+      {
+        "id": 23733,
+        "name": "Tunic",
+        "first_release_date": 1647302400,
+        "cover": { "id": 2, "image_id": "co4a7h" }
+      }
+    ]
+  },
+  {
+    "id": 1942,
+    "similar_games": [
+      {
+        "id": 2155,
+        "name": "Dark Souls",
+        "summary": "An action RPG set in Lordran.",
+        "first_release_date": 1316563200,
+        "cover": { "id": 1, "image_id": "co2uro" }
+      },
+      {
+        "id": 103329,
+        "name": "Control",
+        "first_release_date": 1566432000,
+        "cover": null
+      }
+    ]
+  },
+  {
+    "id": 999999,
+    "name": "A game with no similar list"
+  }
+]

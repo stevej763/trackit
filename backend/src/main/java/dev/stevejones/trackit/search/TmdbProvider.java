@@ -7,6 +7,7 @@ import dev.stevejones.trackit.media.MetadataSource;
 import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.StreamSupport;
@@ -85,6 +86,42 @@ public class TmdbProvider implements MetadataProvider {
             item.setEpisodeCount(integer(node, "number_of_episodes"));
         }
         return item;
+    }
+
+    /**
+     * One call per seed: TMDB has no batch form. Seeds it has nothing for are
+     * skipped, and a failure on one seed doesn't lose the others.
+     */
+    @Override
+    public Map<String, List<SearchResult>> recommendationsFor(MediaType mediaType, List<String> externalIds) {
+        String segment = mediaType == MediaType.MOVIE ? "/movie/" : "/tv/";
+        Map<String, List<SearchResult>> bySeed = new LinkedHashMap<>();
+
+        for (String externalId : externalIds) {
+            JsonNode body = get(segment + externalId + "/recommendations", Map.of("page", "1"));
+            List<SearchResult> results = new ArrayList<>();
+
+            for (JsonNode node : body.path("results")) {
+                // The recommendations endpoint takes no include_adult parameter,
+                // unlike search, so the filtering has to happen here.
+                if (node.path("adult").asBoolean(false)) {
+                    continue;
+                }
+                results.add(new SearchResult(
+                        MetadataSource.TMDB,
+                        mediaType,
+                        node.path("id").asText(),
+                        title(node, mediaType),
+                        year(node, mediaType),
+                        text(node, "overview"),
+                        imageUrl(properties.posterBaseUrl(), text(node, "poster_path")),
+                        null));
+            }
+            if (!results.isEmpty()) {
+                bySeed.put(externalId, results);
+            }
+        }
+        return bySeed;
     }
 
     private JsonNode get(String path, Map<String, String> params) {

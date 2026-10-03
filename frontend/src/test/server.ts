@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import type { Entry, EntryPage, User } from '../api/types';
+import type { Entry, EntryPage, Recommendation, Recommendations, User } from '../api/types';
 
 export const steve: User = { id: 1, username: 'steve' };
 
@@ -38,6 +38,35 @@ export function makePage(items: Entry[]): EntryPage {
   return { items, page: 0, size: 48, totalItems: items.length, totalPages: 1 };
 }
 
+export function makeRecommendation(overrides: Partial<Recommendation> = {}): Recommendation {
+  return {
+    source: 'TMDB',
+    mediaType: 'MOVIE',
+    externalId: '438631',
+    title: 'Dune',
+    releaseYear: 2021,
+    overview: 'Paul Atreides, a brilliant and gifted young man.',
+    posterUrl: null,
+    becauseOfTitle: 'Dune: Part Two',
+    becauseOfRating: 9,
+    seedMatches: 1,
+    ...overrides,
+  };
+}
+
+export function makeRecommendations(overrides: Partial<Recommendations> = {}): Recommendations {
+  return {
+    mediaType: 'MOVIE',
+    items: [makeRecommendation()],
+    seedCount: 1,
+    ratedCount: 1,
+    minimumSeedRating: 7,
+    computedAt: new Date().toISOString(),
+    fromCache: false,
+    ...overrides,
+  };
+}
+
 /** Remembers the query string of every /api/entries call, for URL-sync assertions. */
 export const entriesRequests: string[] = [];
 
@@ -47,4 +76,5 @@ export const server = setupServer(
     entriesRequests.push(new URL(request.url).search);
     return HttpResponse.json(makePage([makeEntry()]));
   }),
+  http.get('/api/recommendations', () => HttpResponse.json(makeRecommendations())),
 );

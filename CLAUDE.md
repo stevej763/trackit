@@ -72,13 +72,14 @@ Packages under `dev.stevejones.trackit`, organised by feature rather than by lay
   the behaviour, `EntrySpecifications` the filtering and ordering.
 - **`search/`** — the `MetadataProvider` interface and its two implementations, plus
   `MetadataProviders` which picks one by `MediaType`.
+- **`recommend/`** — suggestions built from highly-scored entries, plus the cache table behind them.
 - **`stats/`** — native-SQL aggregates for the stats page.
 - **`common/`** — `GlobalExceptionHandler` and the single `ApiError` response shape.
 - **`config/`** — `SecurityConfig`, `RestClientConfig`, `WebConfig` (case-insensitive enum query
   parameters, so the SPA can use `?type=movie`).
 
 Flyway owns the schema (`src/main/resources/db/migration`); Hibernate's `ddl-auto` is `none`.
-**Never edit an applied migration** — add `V3__…sql` instead.
+**Never edit an applied migration** — add `V4__…sql` instead.
 
 Sessions are stored in Postgres via Spring Session JDBC, so restarting `api` doesn't sign everyone
 out. `V2__spring_session.sql` creates those tables and `initialize-schema` is `never`, keeping
@@ -116,10 +117,39 @@ a `text/plain` body, and gets its bearer token from `IgdbTokenStore`, which cach
 client-credentials token in memory and refreshes it once on a 401. Game ids are checked against
 `\d{1,19}` and search terms are stripped of quotes and semicolons before going into a query body.
 
+`recommendationsFor` takes **all** seeds at once, not one at a time: IGDB expands `similar_games`
+for a whole set of ids in a single request, while TMDB needs one call per title. A batch signature
+lets the efficient provider actually be efficient. Note also that TMDB's recommendation endpoints
+accept no `include_adult` parameter, unlike search, so `adult` results are filtered in
+`TmdbProvider` instead.
+
 Every provider failure becomes a `ProviderException` whose message is written to be shown to the
 user as-is ("Set `TMDB_API_KEY`, or add the title by hand") and surfaces as a 503. **With no keys
 configured the app must stay fully usable through manual entry** — the providers refuse to make a
 request at all rather than failing mid-flight. There are tests for that.
+
+### Recommendations
+
+TrackIt does not compute similarity itself. TMDB and IGDB already derive it from far more behaviour
+than a personal library could contain, so `RecommendationService` picks seeds, aggregates what comes
+back, and keeps track of *why* each suggestion is there. Four decisions worth keeping:
+
+- **Seeds** are provider-backed entries of one type, scored at least `MINIMUM_SEED_RATING` (7) and
+  not given up on, best first, capped at `MAX_SEEDS` (10) because TMDB costs one request per seed.
+  Manual entries can never be seeds — there is no id to ask about — which is why the response carries
+  both `seedCount` and `ratedCount`: the UI needs to tell "score something first" apart from
+  "everything you scored was typed in by hand".
+- **Scoring** sums the ratings of the seeds that pointed at a title, so two of your favourites
+  agreeing (8 + 7 = 15) beats a single 10. That is the whole ranking idea.
+- **Ties break on the provider's own position, then title.** This matters more than it looks: seeds
+  share a score often enough that most of a page is one big tie, and both providers return results
+  most-relevant-first. An early version broke ties on title alone and produced pages of suggestions
+  in alphabetical order, which reads as broken even though the scoring was right.
+- **The cache key is a seed fingerprint**, a hash of the seed ids and their scores, alongside a 24h
+  TTL. Scoring something new changes the fingerprint and so refreshes suggestions at once rather
+  than leaving the user waiting out the TTL. If a provider is down and a cached payload exists, the
+  stale list is served rather than an error; an unreadable payload (the record shape changed under
+  an old row) is treated as a miss and recomputed, not a 500 on every request.
 
 ### API shape
 
@@ -135,6 +165,7 @@ All under `/api`, all JSON, all errors as `{error, message, details?}`.
 | `GET` | `/entries` | `type`, `status`, `minRating`, `q`, `sort`, `direction`, `page`, `size`. |
 | `GET`/`PUT`/`DELETE` | `/entries/{id}` | |
 | `PATCH` | `/entries/{id}/status` | The grid's quick status change. |
+| `GET` | `/recommendations?type=&refresh=` | Built from your best-scored titles. Cached per user and type. |
 | `GET` | `/stats` | Gap-filled buckets. |
 
 `PUT /entries/{id}` replaces **every** editable field — a `null` clears it. There is no partial
@@ -158,6 +189,8 @@ Another user's entry id returns **404, not 403**, so ids can't be enumerated.
   `DROPPED` is "Gave up" to the user; `stats/StatsService.java` returns matching labels.
 - `components/`, `pages/` — presentation. `pages/LibraryPage.tsx` keeps all filter state in the URL
   query string (debounced for the search box) so views are linkable and survive a reload.
+- `components/TitleRow.tsx` — a provider result in a list, shared by `AddPage` and `ForYouPage` so a
+  title looks and behaves the same wherever you meet it before it joins the library.
 
 Tailwind 4 is configured entirely in `src/index.css` — no `tailwind.config.js`, no PostCSS config.
 It's on 4 rather than 3 (which `weatherhub` uses) because Tailwind 3's `chokidar`/`braces` chain
@@ -183,14 +216,16 @@ Dark by deliberate choice, built around the artwork. The rules, which are worth 
 
 ## Testing
 
-Backend (42 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
+Backend (65 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
 **singleton container pattern** on purpose. JUnit's `@Testcontainers`/`@Container` pair stops the
 container when the first test class finishes, leaving every class after it talking to a dead
 database; a static initialiser that never stops it avoids that. `TmdbProviderTest` and
 `IgdbProviderTest` use `MockRestServiceServer` against fixtures in `src/test/resources/fixtures/`
-and need no database or network.
+and need no database or network. `RecommendationApiTest` stubs `MetadataProviders` with
+`@MockitoBean` on purpose: what the providers return is the provider tests' job, and what matters at
+that level is the scoring, the exclusions and the caching.
 
-Frontend (11 tests): Vitest + React Testing Library, with MSW stubbing the API
+Frontend (19 tests): Vitest + React Testing Library, with MSW stubbing the API
 (`src/test/server.ts`). `npm run build` type-checks test files too, so a type error in a test breaks
 the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
 
@@ -205,3 +240,5 @@ the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
   Postgres arrays.
 - `RestClient.Builder` mutates in place, so the providers each `clone()` the shared bean before
   setting a base URL.
+- Recommendations are only as good as the scores behind them, and a library added entirely by hand
+  can never produce any. That is a property of the design, not a bug to fix.

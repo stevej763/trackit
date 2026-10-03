@@ -4,6 +4,7 @@ import dev.stevejones.trackit.media.MediaType;
 import dev.stevejones.trackit.media.MetadataSource;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
@@ -37,6 +38,52 @@ public interface EntryRepository extends JpaRepository<Entry, Long>, JpaSpecific
             @Param("source") MetadataSource source,
             @Param("mediaType") MediaType mediaType,
             @Param("externalIds") List<String> externalIds);
+
+    /**
+     * The entries recommendations are built from: provider-backed titles of this
+     * type that the user scored well and didn't give up on, best first.
+     *
+     * <p>Manual entries can't be seeds - there is no provider id to ask about -
+     * which is why callers report the seed count back to the user.
+     */
+    @Query("""
+            select e from Entry e
+            join fetch e.mediaItem mi
+            where e.user.id = :userId
+              and mi.mediaType = :mediaType
+              and mi.externalId is not null
+              and mi.source <> :manual
+              and e.rating >= :minimumRating
+              and e.status <> :dropped
+            order by e.rating desc, e.updatedAt desc
+            """)
+    List<Entry> findRecommendationSeeds(
+            @Param("userId") Long userId,
+            @Param("mediaType") MediaType mediaType,
+            @Param("minimumRating") int minimumRating,
+            @Param("manual") MetadataSource manual,
+            @Param("dropped") EntryStatus dropped,
+            Pageable pageable);
+
+    /**
+     * Everything of this type the user already tracks, to keep it out of
+     * suggestions. Not filtered by source: exactly one provider serves each
+     * media type (see {@code MetadataProviders#forType}), so provider ids cannot
+     * collide within one type.
+     */
+    @Query("""
+            select mi.externalId from Entry e
+            join e.mediaItem mi
+            where e.user.id = :userId
+              and mi.mediaType = :mediaType
+              and mi.externalId is not null
+            """)
+    List<String> findAllTrackedExternalIds(
+            @Param("userId") Long userId,
+            @Param("mediaType") MediaType mediaType);
+
+    /** How many of this type have a score at all, however they were added. */
+    long countByUserIdAndMediaItemMediaTypeAndRatingIsNotNull(Long userId, MediaType mediaType);
 
     /** Projection for {@link #findTrackedExternalIds}. */
     interface TrackedExternalId {

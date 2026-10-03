@@ -7,7 +7,9 @@ import dev.stevejones.trackit.media.MetadataSource;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
 import org.springframework.stereotype.Component;
@@ -95,6 +97,43 @@ public class IgdbProvider implements MetadataProvider {
         item.setGenres(names(game.path("genres")));
         item.setMetadataFetchedAt(Instant.now());
         return item;
+    }
+
+    /**
+     * A single request for every seed: IGDB expands {@code similar_games} for a
+     * whole set of ids at once, and returns ten per game.
+     */
+    @Override
+    public Map<String, List<SearchResult>> recommendationsFor(MediaType mediaType, List<String> externalIds) {
+        List<String> ids = externalIds.stream().filter(id -> NUMERIC_ID.matcher(id).matches()).toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+
+        String body = "where id = (%s); fields id, similar_games.name, similar_games.summary,"
+                .formatted(String.join(",", ids))
+                + " similar_games.first_release_date, similar_games.cover.image_id;"
+                + " limit %d;".formatted(ids.size());
+
+        Map<String, List<SearchResult>> bySeed = new LinkedHashMap<>();
+        for (JsonNode seed : postQuery(body)) {
+            List<SearchResult> similar = new ArrayList<>();
+            for (JsonNode game : seed.path("similar_games")) {
+                similar.add(new SearchResult(
+                        MetadataSource.IGDB,
+                        MediaType.GAME,
+                        game.path("id").asText(),
+                        text(game, "name") != null ? text(game, "name") : "Untitled",
+                        releaseYear(game),
+                        text(game, "summary"),
+                        coverUrl(game),
+                        null));
+            }
+            if (!similar.isEmpty()) {
+                bySeed.put(seed.path("id").asText(), similar);
+            }
+        }
+        return bySeed;
     }
 
     /** Posts a query, refreshing the token once if IGDB says it has expired. */

@@ -20,6 +20,7 @@ export const queryKeys = {
   entry: (id: number) => ['entry', id] as const,
   stats: ['stats'] as const,
   search: (query: string, type: MediaType) => ['search', type, query] as const,
+  recommendations: (type: MediaType) => ['recommendations', type] as const,
 };
 
 export function useEntries(filters: EntryFilters) {
@@ -55,6 +56,17 @@ export function useSearch(query: string, type: MediaType) {
   });
 }
 
+export function useRecommendations(type: MediaType) {
+  return useQuery({
+    queryKey: queryKeys.recommendations(type),
+    queryFn: () => api.recommendations(type),
+    // The server caches these per user; a cold build costs one provider call
+    // per seed, so don't refetch on every mount.
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+}
+
 /** Anything that changes an entry invalidates the library, that entry, and the stats. */
 function useEntryMutation<TArgs>(
   mutationFn: (args: TArgs) => Promise<Entry | void>,
@@ -66,6 +78,8 @@ function useEntryMutation<TArgs>(
       void queryClient.invalidateQueries({ queryKey: ['entries'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.stats });
       void queryClient.invalidateQueries({ queryKey: ['search'] });
+      // Adding or scoring something changes what gets suggested next.
+      void queryClient.invalidateQueries({ queryKey: ['recommendations'] });
       if (entry) {
         queryClient.setQueryData(queryKeys.entry(entry.id), entry);
       }
@@ -96,6 +110,7 @@ export function useDeleteEntry() {
       void queryClient.invalidateQueries({ queryKey: ['entries'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.stats });
       void queryClient.invalidateQueries({ queryKey: ['search'] });
+      void queryClient.invalidateQueries({ queryKey: ['recommendations'] });
     },
   });
 }

@@ -76,6 +76,28 @@ export function describeMediaItem(item: {
   return parts.join(', ');
 }
 
+/** "just now", "3 hours ago", "2 days ago" - for the recommendations timestamp. */
+export function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+
+  const seconds = Math.round((then - Date.now()) / 1000);
+  if (Math.abs(seconds) < 60) return 'just now';
+
+  const formatter = new Intl.RelativeTimeFormat('en-GB', { numeric: 'auto' });
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+  ];
+  for (const [unit, size] of units) {
+    if (Math.abs(seconds) >= size) {
+      return formatter.format(Math.round(seconds / size), unit);
+    }
+  }
+  return 'just now';
+}
+
 export function formatDate(iso: string | null): string {
   if (!iso) return '';
   return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {

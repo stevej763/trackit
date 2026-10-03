@@ -14,6 +14,7 @@ import dev.stevejones.trackit.media.MetadataSource;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
@@ -157,6 +158,79 @@ class TmdbProviderTest {
 
         // No request was attempted, so manual entry stays the only path.
         strict.verify();
+    }
+
+    @Test
+    void recommendsFromAFilmAndDropsAdultResults() throws IOException {
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/693134/recommendations")))
+                .andExpect(queryParam("api_key", "test-key"))
+                .andRespond(withSuccess(fixture("tmdb-movie-recommendations.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        Map<String, List<SearchResult>> bySeed =
+                provider.recommendationsFor(MediaType.MOVIE, List.of("693134"));
+
+        assertThat(bySeed).containsOnlyKeys("693134");
+        List<SearchResult> results = bySeed.get("693134");
+        // Four in the fixture, one of them adult: the recommendations endpoint
+        // accepts no include_adult parameter, so it has to be filtered here.
+        assertThat(results).hasSize(3);
+        assertThat(results).noneMatch(result -> result.title().equals("Something Adult"));
+        assertThat(results.get(0).externalId()).isEqualTo("438631");
+        assertThat(results.get(0).title()).isEqualTo("Dune");
+        assertThat(results.get(0).releaseYear()).isEqualTo(2021);
+        assertThat(results.get(0).posterUrl())
+                .isEqualTo("https://image.tmdb.org/t/p/w500/d5NXSklXo0qyIYkgV94XAgMIckC.jpg");
+        // A blank date and missing artwork must not invent values.
+        assertThat(results.get(2).releaseYear()).isNull();
+        assertThat(results.get(2).posterUrl()).isNull();
+
+        server.verify();
+    }
+
+    @Test
+    void recommendsFromAShowUsingTheShowFieldNames() throws IOException {
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/tv/95396/recommendations")))
+                .andRespond(withSuccess(fixture("tmdb-tv-recommendations.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        List<SearchResult> results =
+                provider.recommendationsFor(MediaType.TV, List.of("95396")).get("95396");
+
+        assertThat(results).hasSize(2);
+        assertThat(results.get(0).title()).isEqualTo("Emergence");
+        assertThat(results.get(0).releaseYear()).isEqualTo(2019);
+        assertThat(results.get(0).mediaType()).isEqualTo(MediaType.TV);
+
+        server.verify();
+    }
+
+    @Test
+    void asksOncePerSeedAndKeepsThemApart() throws IOException {
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/693134/recommendations")))
+                .andRespond(withSuccess(fixture("tmdb-movie-recommendations.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/438631/recommendations")))
+                .andRespond(withSuccess(fixture("tmdb-movie-recommendations.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        Map<String, List<SearchResult>> bySeed =
+                provider.recommendationsFor(MediaType.MOVIE, List.of("693134", "438631"));
+
+        assertThat(bySeed).containsOnlyKeys("693134", "438631");
+        server.verify();
+    }
+
+    @Test
+    void omitsASeedThatCameBackEmptyRatherThanMappingItToNothing() throws IOException {
+        server.expect(MockRestRequestMatchers.anything())
+                .andRespond(withSuccess("{\"results\":[]}", org.springframework.http.MediaType.APPLICATION_JSON));
+
+        assertThat(provider.recommendationsFor(MediaType.MOVIE, List.of("1"))).isEmpty();
     }
 
     @Test

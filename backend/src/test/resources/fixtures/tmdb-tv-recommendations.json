@@ -1,0 +1,22 @@
+{
+  "page": 1,
+  "results": [
+    {
+      "id": 91962,
+      "name": "Emergence",
+      "first_air_date": "2019-09-24",
+      "overview": "A police chief investigates a case involving a young child.",
+      "poster_path": "/emergence.jpg",
+      "adult": false
+    },
+    {
+      "id": 70485,
+      "name": "Mr. Mercedes",
+      "first_air_date": "2017-08-09",
+      "overview": "A retired detective is taunted by a killer.",
+      "poster_path": "/mrmercedes.jpg",
+      "adult": false
+    }
+  ],
+  "total_results": 2
+}

@@ -4,6 +4,7 @@ import { ApiError } from '../api/client';
 import { useCreateEntry, useSearch } from '../api/hooks';
 import type { EntryStatus, MediaType, SearchResult } from '../api/types';
 import Button from '../components/Button';
+import TitleRow from '../components/TitleRow';
 import { STATUS_LABELS, STATUS_ORDER, TYPE_LABELS, TYPE_ORDER } from '../labels';
 import { useDebounced } from '../useDebounced';
 
@@ -130,46 +131,27 @@ export default function AddPage() {
       {search.data?.length ? (
         <ul className="flex flex-col divide-y divide-edge border-y border-edge">
           {search.data.map((result) => (
-            <li key={`${result.source}-${result.externalId}`} className="flex gap-4 py-4">
-              <div className="h-24 w-16 shrink-0 overflow-hidden rounded-sm bg-surface">
-                {result.posterUrl ? (
-                  <img
-                    src={result.posterUrl}
-                    alt=""
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                ) : null}
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-normal">
-                  {result.title}
-                  {result.releaseYear ? (
-                    <span className="ml-2 text-paper-dim">{result.releaseYear}</span>
-                  ) : null}
-                </h2>
-                {result.overview ? (
-                  <p className="mt-1 line-clamp-2 max-w-[68ch] text-sm text-paper-dim">
-                    {result.overview}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="shrink-0 self-center">
-                {result.trackedEntryId ? (
-                  <Link
-                    to={`/item/${result.trackedEntryId}`}
-                    className="text-sm text-paper-dim underline underline-offset-4 hover:text-paper"
-                  >
-                    Already tracked
-                  </Link>
-                ) : (
-                  <Button onClick={() => add(result)} disabled={createEntry.isPending}>
-                    Add
-                  </Button>
-                )}
-              </div>
+            <li key={`${result.source}-${result.externalId}`}>
+              <TitleRow
+                title={result.title}
+                releaseYear={result.releaseYear}
+                overview={result.overview}
+                posterUrl={result.posterUrl}
+                action={
+                  result.trackedEntryId ? (
+                    <Link
+                      to={`/item/${result.trackedEntryId}`}
+                      className="text-sm text-paper-dim underline underline-offset-4 hover:text-paper"
+                    >
+                      Already tracked
+                    </Link>
+                  ) : (
+                    <Button onClick={() => add(result)} disabled={createEntry.isPending}>
+                      Add
+                    </Button>
+                  )
+                }
+              />
             </li>
           ))}
         </ul>
