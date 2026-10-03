@@ -1,0 +1,75 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: trackit-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trackit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trackit}
+      POSTGRES_DB: ${POSTGRES_DB:-trackit}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trackit} -d ${POSTGRES_DB:-trackit}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+    container_name: trackit-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # No host port: nginx in the web service is the only way in, which keeps the
+    # session cookie same-origin and means there is no CORS to configure.
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-trackit}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-trackit}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-trackit}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
+      IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
+      TRACKIT_SECURE_COOKIE: ${TRACKIT_SECURE_COOKIE:-false}
+      TRACKIT_LOG_LEVEL: ${TRACKIT_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  web:
+    build:
+      context: ./frontend
+    container_name: trackit-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${TRACKIT_PORT:-8300}:80"
+
+  # Runs the backend test suite without needing Java on the host:
+  #   docker compose run --rm api-test
+  # The docker socket is mounted because the tests start their own throwaway
+  # Postgres via Testcontainers. Behind the "test" profile, so it never starts
+  # as part of `docker compose up`.
+  api-test:
+    profiles: ["test"]
+    image: maven:3.9-eclipse-temurin-21
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - maven_cache:/root/.m2
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    command: ["mvn", "-B", "test"]
+
+volumes:
+  db_data:
+  maven_cache:

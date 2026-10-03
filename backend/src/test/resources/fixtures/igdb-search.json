@@ -1,0 +1,15 @@
+[
+  {
+    "id": 119133,
+    "name": "Elden Ring",
+    "summary": "A new fantasy action RPG where players travel through the Lands Between.",
+    "first_release_date": 1645747200,
+    "cover": { "id": 180109, "image_id": "co4jni" }
+  },
+  {
+    "id": 11169,
+    "name": "The Witcher 3: Wild Hunt",
+    "first_release_date": 1431993600,
+    "cover": { "id": 1234, "image_id": "co1wyy" }
+  }
+]

@@ -1,0 +1,207 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A personal media tracker: films, TV shows and video games you're watching, playing or want to get
+to, each with a status, a score out of 10 and a free-text review. Multi-user with username/password
+sign-in and open registration; every account's library, scores and reviews are private to it, while
+the catalogue of titles is shared so metadata is fetched once.
+
+Three services, composed: a Spring Boot API, PostgreSQL, and a React SPA served by nginx.
+
+## Commands
+
+Run everything with Docker (the primary workflow — there is no Java or Maven on the dev machine):
+
+```sh
+cp .env.example .env
+docker compose up --build
+```
+
+Visit `http://localhost:8300` (`TRACKIT_PORT`). Only the `web` service publishes a host port; `api`
+is reachable only through nginx's `/api/` proxy, and `db` only from inside the compose network.
+
+```sh
+docker compose logs -f api              # backend logs
+docker compose run --rm api-test        # backend tests (mounts the docker socket for Testcontainers)
+docker compose exec db psql -U trackit -d trackit
+docker compose restart api              # sessions survive this; they live in Postgres
+```
+
+Backend without Docker needs a JDK 21 (`brew install --cask temurin@21`) and a Postgres on
+`localhost:5432`:
+
+```sh
+cd backend && ./mvnw spring-boot:run     # :8080
+cd backend && ./mvnw test                # needs a running Docker for Testcontainers
+```
+
+Frontend without Docker (Node 20.19+):
+
+```sh
+cd frontend
+npm install
+npm run dev        # :5173, proxies /api to localhost:8080 (see vite.config.ts)
+npm test           # Vitest, 11 tests
+npm run lint
+npm run build      # type-checks with tsc --noEmit first, so test files are checked too
+```
+
+## Architecture
+
+### One origin, no CORS
+
+nginx serves the SPA and reverse-proxies `/api/` to the `api` service, so the browser only ever
+talks to one origin. There is deliberately **no CORS configuration anywhere in this project**, and
+the session cookie is first-party. Keep it that way: exposing the API on its own host port would
+require CORS and `SameSite=None`, and would make the cookie third-party.
+
+### `backend/` — Spring Boot 3.5, Java 21, Maven
+
+Packages under `dev.stevejones.trackit`, organised by feature rather than by layer:
+
+- **`auth/`** — `AppUser` (username in a `citext` column, BCrypt hash), `AppUserPrincipal` (a
+  `UserDetails` carrying the user id so handlers scope queries without a lookup), `AuthController`
+  (`/api/auth/register`, `/login`, `/me`). Logout is Spring Security's own filter, configured in
+  `SecurityConfig`.
+- **`media/`** — `MediaItem`, the shared catalogue row, deduplicated on
+  `(source, mediaType, externalId)`.
+- **`entry/`** — `Entry`, one user's status/score/review for one `MediaItem`. `EntryService` holds
+  the behaviour, `EntrySpecifications` the filtering and ordering.
+- **`search/`** — the `MetadataProvider` interface and its two implementations, plus
+  `MetadataProviders` which picks one by `MediaType`.
+- **`stats/`** — native-SQL aggregates for the stats page.
+- **`common/`** — `GlobalExceptionHandler` and the single `ApiError` response shape.
+- **`config/`** — `SecurityConfig`, `RestClientConfig`, `WebConfig` (case-insensitive enum query
+  parameters, so the SPA can use `?type=movie`).
+
+Flyway owns the schema (`src/main/resources/db/migration`); Hibernate's `ddl-auto` is `none`.
+**Never edit an applied migration** — add `V3__…sql` instead.
+
+Sessions are stored in Postgres via Spring Session JDBC, so restarting `api` doesn't sign everyone
+out. `V2__spring_session.sql` creates those tables and `initialize-schema` is `never`, keeping
+Flyway the single owner of the schema. `AppUserPrincipal` is serialised into the session, so
+changing its fields invalidates existing sessions.
+
+### CSRF, and the one subtle bit
+
+Auth is a session cookie plus a readable `XSRF-TOKEN` cookie that the SPA echoes in `X-XSRF-TOKEN`
+(`config/SpaCsrfTokenRequestHandler`, `config/CsrfCookieFilter` — Spring Security's documented SPA
+recipe). The subtlety: signing in **rotates** the CSRF token, and the replacement is deferred — its
+cookie is only written if something reads the token's value during that response. `AuthController`
+reads it deliberately (`renderRotatedCsrfToken`), and the logout success handler issues a fresh one,
+because logout clears the cookie and the very next request is usually a sign-in `POST`. Without
+either, a client is left holding a token the server has discarded and its next write gets a 403.
+`api/client.ts` also retries once on `csrf_failed` as a backstop. If you touch any of this, test
+register → write and logout → sign-in with no request in between.
+
+### Sorting, and why it isn't in the `Pageable`
+
+`EntryController` maps client sort keys (`added`, `title`, `rating`, `finished`, `year`, `updated`)
+onto entity paths through a whitelist, then passes the property and direction down. The ordering is
+applied inside `EntrySpecifications.withMediaItemOrderedBy`, with an **unsorted** `PageRequest`, for
+two reasons: Spring Data's `Sort` cannot express null precedence against a criteria query (it throws
+`UnsupportedOperationException`), and doing it by hand lets the `ORDER BY` reuse the media-item fetch
+join instead of adding a second one. Nulls are pushed last in both directions with a `CASE WHEN …
+IS NULL` expression, so unrated and unfinished entries never crowd the top of a descending list. A
+sorted `Pageable` would silently override all of it.
+
+### Metadata providers
+
+`TmdbProvider` handles `MOVIE` and `TV` (note TMDB uses `title`/`release_date` for films but
+`name`/`first_air_date` for shows). `IgdbProvider` handles `GAME`, posts IGDB's own query language as
+a `text/plain` body, and gets its bearer token from `IgdbTokenStore`, which caches a Twitch
+client-credentials token in memory and refreshes it once on a 401. Game ids are checked against
+`\d{1,19}` and search terms are stripped of quotes and semicolons before going into a query body.
+
+Every provider failure becomes a `ProviderException` whose message is written to be shown to the
+user as-is ("Set `TMDB_API_KEY`, or add the title by hand") and surfaces as a 503. **With no keys
+configured the app must stay fully usable through manual entry** — the providers refuse to make a
+request at all rather than failing mid-flight. There are tests for that.
+
+### API shape
+
+All under `/api`, all JSON, all errors as `{error, message, details?}`.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `POST` | `/auth/register` | Open; signs the new account straight in. 409 on a duplicate (case-insensitive). |
+| `POST` | `/auth/login`, `/auth/logout` | |
+| `GET` | `/auth/me` | 401 when anonymous — the SPA uses this on boot. |
+| `GET` | `/search?q=&type=movie\|tv\|game` | Provider search. Persists nothing; flags hits already in your library. |
+| `POST` | `/entries` | Either `{source, externalId}` or `{manual: {...}}`. |
+| `GET` | `/entries` | `type`, `status`, `minRating`, `q`, `sort`, `direction`, `page`, `size`. |
+| `GET`/`PUT`/`DELETE` | `/entries/{id}` | |
+| `PATCH` | `/entries/{id}/status` | The grid's quick status change. |
+| `GET` | `/stats` | Gap-filled buckets. |
+
+`PUT /entries/{id}` replaces **every** editable field — a `null` clears it. There is no partial
+patch, so the client always sends the whole editable set; `PATCH /entries/{id}/status` exists for the
+one case that can't. One exception to "null clears": moving an entry *into* `COMPLETED` with no
+`finishedOn` fills in today, since the stats page counts completions by month and a finished entry
+with no date would quietly go missing. Clearing the date on an already-finished entry still clears
+it.
+
+Another user's entry id returns **404, not 403**, so ids can't be enumerated.
+
+### `frontend/` — Vite 8, React 19, TypeScript, Tailwind 4
+
+- `api/client.ts` — the only place `fetch` is called. Adds the CSRF header, throws `ApiError`.
+- `api/hooks.ts` — TanStack Query hooks and the query keys. All server state goes through these;
+  there are no hand-rolled loading flags.
+- `auth/context.ts` holds the context and `useAuth`; `auth/AuthProvider.tsx` holds the component.
+  They're split so react-refresh keeps working.
+- `labels.ts` — **the app's whole vocabulary.** Status and type names live here only, so a thing is
+  called the same on the button, the filter and the stats page. `COMPLETED` is "Finished" and
+  `DROPPED` is "Gave up" to the user; `stats/StatsService.java` returns matching labels.
+- `components/`, `pages/` — presentation. `pages/LibraryPage.tsx` keeps all filter state in the URL
+  query string (debounced for the search box) so views are linkable and survive a reload.
+
+Tailwind 4 is configured entirely in `src/index.css` — no `tailwind.config.js`, no PostCSS config.
+It's on 4 rather than 3 (which `weatherhub` uses) because Tailwind 3's `chokidar`/`braces` chain
+carries five high-severity advisories.
+
+## Design
+
+Dark by deliberate choice, built around the artwork. The rules, which are worth keeping:
+
+- **Posters are not cards.** No frame, no shadow, no hover lift. The artwork is the object.
+- **One accent, spent on the score.** `--color-lamp` (projector amber) is essentially only used for
+  the ten-notch score meter, active filters and focus rings. The score is what the app is *for*, so
+  it's the brightest thing on screen.
+- **The ten-notch meter is the signature element** (`ScoreMeter`, `ScoreInput`). An unscored entry
+  still draws ten dim notches: "no verdict yet" is information.
+- Tokens are defined once in `src/index.css` `@theme`. Every text pairing clears WCAG AA against its
+  own background — re-check with a contrast calculator if you change one.
+- Plain words in sentence case. No all-caps eyebrow labels, no `·`-joined meta strings (a hairline
+  `border-l` separates metadata instead), no `→` appended to links, no numbered markers.
+- Keyboard and screen-reader support is part of the floor: `ScoreInput` is a real radio group with
+  arrow-key support, bars carry `aria-label`s, charts have a `<details>` table view, and
+  `prefers-reduced-motion` is respected.
+
+## Testing
+
+Backend (42 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
+**singleton container pattern** on purpose. JUnit's `@Testcontainers`/`@Container` pair stops the
+container when the first test class finishes, leaving every class after it talking to a dead
+database; a static initialiser that never stops it avoids that. `TmdbProviderTest` and
+`IgdbProviderTest` use `MockRestServiceServer` against fixtures in `src/test/resources/fixtures/`
+and need no database or network.
+
+Frontend (11 tests): Vitest + React Testing Library, with MSW stubbing the API
+(`src/test/server.ts`). `npm run build` type-checks test files too, so a type error in a test breaks
+the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
+
+## Gotchas
+
+- `docker compose up` builds the backend inside a Maven image; the first build downloads a Maven
+  repository into a BuildKit cache mount. Later builds are fast.
+- `TRACKIT_SECURE_COOKIE=true` over plain HTTP makes sign-in fail with no visible error — the
+  browser drops the cookie. Only set it behind HTTPS.
+- `citext` needs the extension, created in `V1__init.sql`. It's in the standard `postgres` image.
+- `MediaItem.genres`/`platforms` are `jsonb` mapped with `@JdbcTypeCode(SqlTypes.JSON)`, not
+  Postgres arrays.
+- `RestClient.Builder` mutates in place, so the providers each `clone()` the shared bean before
+  setting a base URL.

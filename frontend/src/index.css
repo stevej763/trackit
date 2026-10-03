@@ -1,0 +1,96 @@
+@import 'tailwindcss';
+
+/*
+ * TrackIt's look: a dark room with the artwork as the only light source.
+ *
+ * The ground is a deep night blue (never a tinted black), type is warm paper so
+ * it reads as print rather than screen-white, and there is exactly one accent -
+ * projector amber - spent almost entirely on the thing this app exists for: the
+ * 1-10 score. Posters get no card frame, no shadow, no border: the artwork is
+ * the object. Every pairing below clears WCAG AA against its own background.
+ */
+@theme {
+  --color-ink: #141a27;
+  --color-ink-deep: #0d121c;
+  --color-surface: #1d2434;
+  --color-edge: #2b3447;
+  --color-edge-bright: #3d4961;
+  --color-paper: #f2ede3;
+  --color-paper-dim: #96a0b5;
+  --color-lamp: #f0a826;
+  --color-ember: #e08775;
+
+  --font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-ink);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* One visible focus treatment everywhere, in the accent. */
+  :focus-visible {
+    outline: 2px solid var(--color-lamp);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+
+  /* Dark form controls, including the native date pickers. */
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type='date'] {
+    color-scheme: dark;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* A recessed input well, used by every text field and select. */
+  .field {
+    width: 100%;
+    background-color: var(--color-ink-deep);
+    border: 1px solid var(--color-edge);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .field::placeholder {
+    color: var(--color-paper-dim);
+  }
+
+  .field:focus {
+    border-color: var(--color-edge-bright);
+  }
+}

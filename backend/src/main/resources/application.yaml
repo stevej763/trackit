@@ -1,0 +1,74 @@
+spring:
+  application:
+    name: trackit
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/trackit}
+    username: ${SPRING_DATASOURCE_USERNAME:trackit}
+    password: ${SPRING_DATASOURCE_PASSWORD:trackit}
+
+  jpa:
+    # Flyway owns the schema; Hibernate must never touch it.
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  session:
+    store-type: jdbc
+    timeout: 30d
+    jdbc:
+      # V2__spring_session.sql creates these tables.
+      initialize-schema: never
+
+server:
+  port: 8080
+  servlet:
+    session:
+      cookie:
+        name: TRACKIT_SESSION
+        http-only: true
+        same-site: lax
+        # Only meaningful behind HTTPS; leave false for plain-HTTP LAN use or
+        # the browser will silently drop the cookie.
+        secure: ${TRACKIT_SECURE_COOKIE:false}
+  # nginx sits in front and terminates the client connection.
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+
+trackit:
+  tmdb:
+    api-key: ${TMDB_API_KEY:}
+    base-url: https://api.themoviedb.org/3
+    poster-base-url: https://image.tmdb.org/t/p/w500
+    backdrop-base-url: https://image.tmdb.org/t/p/w1280
+  igdb:
+    client-id: ${IGDB_CLIENT_ID:}
+    client-secret: ${IGDB_CLIENT_SECRET:}
+    base-url: https://api.igdb.com/v4
+    token-url: https://id.twitch.tv/oauth2/token
+    cover-base-url: https://images.igdb.com/igdb/image/upload/t_cover_big
+    screenshot-base-url: https://images.igdb.com/igdb/image/upload/t_screenshot_big
+
+logging:
+  level:
+    dev.stevejones.trackit: ${TRACKIT_LOG_LEVEL:INFO}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Only health is exposed; the compose healthcheck is its only consumer.
+        include: health
+  endpoint:
+    health:
+      show-details: never

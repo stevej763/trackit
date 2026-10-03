@@ -1,0 +1,141 @@
+package dev.stevejones.trackit.auth;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import dev.stevejones.trackit.IntegrationTest;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.web.servlet.MockMvc;
+
+class AuthApiTest extends IntegrationTest {
+
+    @Autowired MockMvc mockMvc;
+    @Autowired AppUserRepository users;
+    @Autowired PasswordEncoder passwordEncoder;
+
+    @BeforeEach
+    void clean() {
+        users.deleteAll();
+    }
+
+    @Test
+    void registersAnAccountAndStoresOnlyAHash() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"steve","password":"correct horse battery"}"""))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.username").value("steve"))
+                // The response must never echo the password back.
+                .andExpect(jsonPath("$.password").doesNotExist());
+
+        AppUser saved = users.findByUsername("steve").orElseThrow();
+        assertThat(saved.getPasswordHash())
+                .isNotEqualTo("correct horse battery")
+                .startsWith("$2");
+        assertThat(passwordEncoder.matches("correct horse battery", saved.getPasswordHash())).isTrue();
+    }
+
+    @Test
+    void treatsUsernamesAsCaseInsensitiveWhenRejectingDuplicates() throws Exception {
+        users.save(new AppUser("steve", passwordEncoder.encode("whatever123")));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"STEVE","password":"something else"}"""))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("conflict"));
+
+        assertThat(users.count()).isEqualTo(1);
+    }
+
+    @Test
+    void returnsPerFieldMessagesForAWeakRegistration() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"ab","password":"short"}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("validation_failed"))
+                .andExpect(jsonPath("$.details.username").exists())
+                .andExpect(jsonPath("$.details.password").exists());
+
+        assertThat(users.count()).isZero();
+    }
+
+    @Test
+    void rejectsUsernamesWithCharactersThatWouldBeAmbiguous() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"steve jones!","password":"longenoughpassword"}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.username").exists());
+    }
+
+    @Test
+    void givesTheSameAnswerForAWrongPasswordAndAnUnknownUser() throws Exception {
+        users.save(new AppUser("steve", passwordEncoder.encode("therealpassword")));
+
+        String wrongPassword = mockMvc.perform(post("/api/auth/login")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"steve","password":"notthepassword"}"""))
+                .andExpect(status().isUnauthorized())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String unknownUser = mockMvc.perform(post("/api/auth/login")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"nobody","password":"notthepassword"}"""))
+                .andExpect(status().isUnauthorized())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        // Identical bodies, so the API can't be used to discover who has an account.
+        assertThat(wrongPassword).isEqualTo(unknownUser);
+    }
+
+    @Test
+    void answersAnonymousApiCallsWithAJsonError() throws Exception {
+        mockMvc.perform(get("/api/entries"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("unauthenticated"))
+                .andExpect(jsonPath("$.message").value("Please sign in"));
+    }
+
+    @Test
+    void refusesAWriteWithNoCsrfToken() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"steve","password":"longenoughpassword"}"""))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("csrf_failed"));
+
+        assertThat(users.count()).isZero();
+    }
+
+    @Test
+    void leavesTheHealthEndpointOpenForTheContainerHealthcheck() throws Exception {
+        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    }
+}

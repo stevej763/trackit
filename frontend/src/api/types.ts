@@ -1,0 +1,117 @@
+export type MediaType = 'MOVIE' | 'TV' | 'GAME';
+export type MetadataSource = 'TMDB' | 'IGDB' | 'MANUAL';
+export type EntryStatus = 'WANT' | 'IN_PROGRESS' | 'ON_HOLD' | 'COMPLETED' | 'DROPPED';
+
+export interface User {
+  id: number;
+  username: string;
+}
+
+export interface MediaItem {
+  id: number;
+  mediaType: MediaType;
+  source: MetadataSource;
+  externalId: string | null;
+  title: string;
+  releaseYear: number | null;
+  overview: string | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  runtimeMinutes: number | null;
+  seasonCount: number | null;
+  episodeCount: number | null;
+  platforms: string[] | null;
+  genres: string[] | null;
+}
+
+export interface Entry {
+  id: number;
+  status: EntryStatus;
+  rating: number | null;
+  review: string | null;
+  startedOn: string | null;
+  finishedOn: string | null;
+  createdAt: string;
+  updatedAt: string;
+  mediaItem: MediaItem;
+}
+
+export interface EntryPage {
+  items: Entry[];
+  page: number;
+  size: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+export interface SearchResult {
+  source: MetadataSource;
+  mediaType: MediaType;
+  externalId: string;
+  title: string;
+  releaseYear: number | null;
+  overview: string | null;
+  posterUrl: string | null;
+  /** Set when this title is already in the caller's library. */
+  trackedEntryId: number | null;
+}
+
+export interface Bucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface TypeAverage {
+  key: string;
+  label: string;
+  average: number | null;
+}
+
+export interface Stats {
+  totalItems: number;
+  ratedItems: number;
+  averageRating: number | null;
+  byMediaType: Bucket[];
+  byStatus: Bucket[];
+  ratingHistogram: Bucket[];
+  finishedByMonth: Bucket[];
+  averageRatingByMediaType: TypeAverage[];
+}
+
+export interface ApiErrorBody {
+  error: string;
+  message: string;
+  details?: Record<string, string> | null;
+}
+
+export interface EntryFilters {
+  type?: MediaType | null;
+  status?: EntryStatus | null;
+  minRating?: number | null;
+  q?: string | null;
+  sort: string;
+  direction: 'asc' | 'desc';
+  page: number;
+}
+
+export interface UpdateEntryPayload {
+  status: EntryStatus;
+  rating: number | null;
+  review: string | null;
+  startedOn: string | null;
+  finishedOn: string | null;
+}
+
+export interface CreateEntryPayload {
+  mediaType: MediaType;
+  status: EntryStatus;
+  source?: MetadataSource;
+  externalId?: string;
+  manual?: {
+    title: string;
+    releaseYear?: number | null;
+    overview?: string | null;
+    posterUrl?: string | null;
+  };
+}

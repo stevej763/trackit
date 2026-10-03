@@ -1,0 +1,12 @@
+[
+  {
+    "id": 119133,
+    "name": "Elden Ring",
+    "summary": "A new fantasy action RPG where players travel through the Lands Between.",
+    "first_release_date": 1645747200,
+    "cover": { "id": 180109, "image_id": "co4jni" },
+    "screenshots": [{ "id": 1, "image_id": "sc8abc" }],
+    "platforms": [{ "id": 6, "name": "PC (Microsoft Windows)" }, { "id": 167, "name": "PlayStation 5" }],
+    "genres": [{ "id": 12, "name": "Role-playing (RPG)" }, { "id": 31, "name": "Adventure" }]
+  }
+]
