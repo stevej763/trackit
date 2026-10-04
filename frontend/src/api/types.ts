@@ -83,6 +83,45 @@ export interface Stats {
   ratingHistogram: Bucket[];
   finishedByMonth: Bucket[];
   averageRatingByMediaType: TypeAverage[];
+  filmTime: FilmTime;
+  genres: Genre[];
+  /** Years with a finish, newest first, always including this one. */
+  years: number[];
+}
+
+/** Finished films only: TV and games come with no running time. */
+export interface FilmTime {
+  minutes: number;
+  /** Finished films that don't say how long they are, so the total is short. */
+  filmsWithoutRuntime: number;
+}
+
+export interface Genre {
+  name: string;
+  count: number;
+  /** Mean of the scored titles carrying it; null if none are scored. */
+  average: number | null;
+}
+
+export interface YearHighlight {
+  entryId: number;
+  title: string;
+  mediaType: MediaType;
+  posterUrl: string | null;
+  rating: number;
+}
+
+export interface YearInReview {
+  year: number;
+  years: number[];
+  finished: number;
+  averageRating: number | null;
+  byMediaType: Bucket[];
+  /** January to December. */
+  byMonth: Bucket[];
+  filmTime: FilmTime;
+  genres: Genre[];
+  best: YearHighlight[];
 }
 
 export interface Recommendation {

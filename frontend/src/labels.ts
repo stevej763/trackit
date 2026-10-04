@@ -76,6 +76,15 @@ export function describeMediaItem(item: {
   return parts.join(', ');
 }
 
+/** A stat tile's worth of time: "283" hours, or "45" minutes when it's under one. */
+export function splitDuration(minutes: number): { value: number; unit: string } {
+  if (minutes < 60) {
+    return { value: minutes, unit: minutes === 1 ? 'minute' : 'minutes' };
+  }
+  const hours = Math.round(minutes / 60);
+  return { value: hours, unit: hours === 1 ? 'hour' : 'hours' };
+}
+
 /** "just now", "3 hours ago", "2 days ago" - for the recommendations timestamp. */
 export function formatRelative(iso: string): string {
   const then = new Date(iso).getTime();

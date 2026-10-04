@@ -20,7 +20,7 @@ function initials(title: string): string {
 }
 
 interface Props {
-  item: MediaItem;
+  item: Pick<MediaItem, 'title' | 'posterUrl'>;
   /** Covers the whole poster area; the caller sets the aspect ratio. */
   sizes?: string;
   priority?: boolean;

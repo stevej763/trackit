@@ -12,6 +12,7 @@ import LibraryPage from './pages/LibraryPage';
 import SignInPage from './pages/SignInPage';
 import SignUpPage from './pages/SignUpPage';
 import StatsPage from './pages/StatsPage';
+import YearInReviewPage from './pages/YearInReviewPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,6 +41,7 @@ export default function App() {
                 <Route path="/add" element={<AddPage />} />
                 <Route path="/for-you" element={<ForYouPage />} />
                 <Route path="/stats" element={<StatsPage />} />
+                <Route path="/stats/:year" element={<YearInReviewPage />} />
                 <Route path="/item/:id" element={<ItemPage />} />
                 <Route path="/account" element={<AccountPage />} />
               </Route>

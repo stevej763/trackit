@@ -121,7 +121,7 @@ Roughly in order of value:
 4. **Where to watch.** TMDB's `/watch/providers` gives streaming services by region for the item page.
 5. **Upcoming releases.** Highlight "Want to start" titles that come out in the next few weeks.
 6. **Richer stats.** A year in review, total hours watched (runtimes are stored), a genre breakdown
-   (genres are stored).
+   (genres are stored). *Done: hours count films only, since TV and games store no running time.*
 7. **Custom lists and tags.** For example "Christmas films" or "co-op games".
 8. **"Pick something for me".** A random pick from "Want to start", filterable by type or runtime.
 9. **An optional read-only share link** to your library or a single review.

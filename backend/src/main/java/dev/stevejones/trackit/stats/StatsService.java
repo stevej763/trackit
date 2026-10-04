@@ -3,14 +3,22 @@ package dev.stevejones.trackit.stats;
 import dev.stevejones.trackit.entry.EntryStatus;
 import dev.stevejones.trackit.media.MediaType;
 import dev.stevejones.trackit.stats.StatsRepository.KeyAverage;
+import dev.stevejones.trackit.stats.StatsRepository.GenreRow;
 import dev.stevejones.trackit.stats.StatsRepository.KeyCount;
+import dev.stevejones.trackit.stats.StatsRepository.RuntimeTotal;
 import dev.stevejones.trackit.stats.StatsResponse.Average;
 import dev.stevejones.trackit.stats.StatsResponse.Bucket;
+import dev.stevejones.trackit.stats.StatsResponse.FilmTime;
+import dev.stevejones.trackit.stats.StatsResponse.Genre;
+import dev.stevejones.trackit.stats.YearInReview.Highlight;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.Year;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -25,6 +33,9 @@ public class StatsService {
 
     private static final DateTimeFormatter MONTH_KEY = DateTimeFormatter.ofPattern("yyyy-MM");
     private static final int MONTHS = 12;
+    private static final int LIBRARY_GENRES = 10;
+    private static final int YEAR_GENRES = 5;
+    private static final int YEAR_BEST = 6;
 
     private final StatsRepository repository;
 
@@ -69,7 +80,64 @@ public class StatsService {
                 byStatus,
                 ratingHistogram,
                 finishedByMonth,
-                averages);
+                averages,
+                filmTime(repository.finishedFilmRuntime(userId)),
+                genres(repository.genres(userId, LIBRARY_GENRES)),
+                years(userId, zone));
+    }
+
+    /** Everything finished in one calendar year, where "year" is the user's, not UTC's. */
+    @Transactional(readOnly = true)
+    public YearInReview yearInReview(Long userId, int year, ZoneId zone) {
+        Instant from = LocalDate.of(year, 1, 1).atStartOfDay(zone).toInstant();
+        Instant to = LocalDate.of(year + 1, 1, 1).atStartOfDay(zone).toInstant();
+
+        List<Bucket> byMediaType = fill(
+                repository.countFinishedByMediaTypeBetween(userId, from, to),
+                MediaType.values(),
+                Enum::name,
+                StatsService::mediaTypeLabel);
+
+        List<Bucket> byMonth = monthsOf(
+                repository.countFinishedByMonthBetween(userId, zone.getId(), from, to),
+                LocalDate.of(year, 1, 1));
+
+        List<Highlight> best = repository.bestFinishedBetween(userId, from, to, YEAR_BEST).stream()
+                .map(row -> new Highlight(
+                        row.getEntryId(), row.getTitle(), row.getMediaType(), row.getPosterUrl(), row.getRating()))
+                .toList();
+
+        return new YearInReview(
+                year,
+                years(userId, zone),
+                byMediaType.stream().mapToLong(Bucket::count).sum(),
+                round(repository.averageRatingFinishedBetween(userId, from, to)),
+                byMediaType,
+                byMonth,
+                filmTime(repository.finishedFilmRuntimeBetween(userId, from, to)),
+                genres(repository.genresFinishedBetween(userId, from, to, YEAR_GENRES)),
+                best);
+    }
+
+    /** Years with a finish, newest first, always including this one so there's somewhere to start. */
+    private List<Integer> years(Long userId, ZoneId zone) {
+        List<Integer> years = new ArrayList<>(repository.finishedYears(userId, zone.getId()));
+        int thisYear = Year.now(zone).getValue();
+        if (!years.contains(thisYear)) {
+            years.add(thisYear);
+            years.sort(Comparator.reverseOrder());
+        }
+        return List.copyOf(years);
+    }
+
+    private static FilmTime filmTime(RuntimeTotal total) {
+        return new FilmTime(total.getMinutes(), total.getMissing());
+    }
+
+    private static List<Genre> genres(List<GenreRow> rows) {
+        return rows.stream()
+                .map(row -> new Genre(row.getKey(), row.getTotal(), round(row.getAverage())))
+                .toList();
     }
 
     /** Projects grouped counts onto the full set of enum values, zeros included. */
@@ -103,12 +171,16 @@ public class StatsService {
     }
 
     private static List<Bucket> finishedByMonth(List<KeyCount> rows, ZoneId zone) {
+        // "This month" in the user's zone, matching the query's bucketing.
+        return monthsOf(rows, LocalDate.now(zone).withDayOfMonth(1).minusMonths(MONTHS - 1L));
+    }
+
+    /** Twelve monthly buckets starting at {@code start}'s month, zeros included. */
+    private static List<Bucket> monthsOf(List<KeyCount> rows, LocalDate start) {
         Map<String, Long> counts = rows.stream()
                 .collect(Collectors.toMap(KeyCount::getKey, KeyCount::getTotal));
 
         Map<String, Bucket> buckets = new LinkedHashMap<>();
-        // "This month" in the user's zone, matching the query's bucketing.
-        LocalDate start = LocalDate.now(zone).withDayOfMonth(1).minusMonths(MONTHS - 1L);
         for (int offset = 0; offset < MONTHS; offset++) {
             LocalDate month = start.plusMonths(offset);
             String key = month.format(MONTH_KEY);

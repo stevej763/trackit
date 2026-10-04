@@ -5,6 +5,7 @@ import dev.stevejones.trackit.common.BadRequestException;
 import java.time.ZoneId;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,6 +29,18 @@ public class StatsController {
             @AuthenticationPrincipal AppUserPrincipal principal,
             @RequestParam(name = "tz", required = false) String tz) {
         return service.forUser(principal.getId(), zoneOf(tz));
+    }
+
+    /** One calendar year of finishes, bounded by midnight on 1 January in {@code tz}. */
+    @GetMapping("/years/{year}")
+    public YearInReview year(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable int year,
+            @RequestParam(name = "tz", required = false) String tz) {
+        if (year < 1 || year > 9998) {
+            throw new BadRequestException("'" + year + "' is not a year we can count.");
+        }
+        return service.yearInReview(principal.getId(), year, zoneOf(tz));
     }
 
     /**

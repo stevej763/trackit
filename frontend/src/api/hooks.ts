@@ -21,6 +21,8 @@ export const queryKeys = {
   entries: (filters: EntryFilters) => ['entries', filters] as const,
   entry: (id: number) => ['entry', id] as const,
   stats: ['stats'] as const,
+  // Under 'stats', so invalidating the stats invalidates every year too.
+  year: (year: number) => ['stats', 'year', year] as const,
   search: (query: string, type: MediaType) => ['search', type, query] as const,
   recommendations: (type: MediaType) => ['recommendations', type] as const,
 };
@@ -59,6 +61,15 @@ export function useEntry(id: number) {
 
 export function useStats() {
   return useQuery({ queryKey: queryKeys.stats, queryFn: api.stats });
+}
+
+export function useYearInReview(year: number) {
+  return useQuery({
+    queryKey: queryKeys.year(year),
+    queryFn: () => api.yearInReview(year),
+    enabled: Number.isInteger(year),
+    placeholderData: (previous) => previous,
+  });
 }
 
 export function useSearch(query: string, type: MediaType) {

@@ -45,7 +45,7 @@ Frontend without Docker (Node 20.19+):
 cd frontend
 npm install
 npm run dev        # :5173, proxies /api to localhost:8080 (see vite.config.ts)
-npm test           # Vitest, 43 tests
+npm test           # Vitest, 52 tests
 npm run lint
 npm run build      # type-checks with tsc --noEmit first, so test files are checked too
 ```
@@ -77,7 +77,7 @@ Packages under `dev.stevejones.trackit`, organised by feature rather than by lay
   `MetadataProviders` which picks one by `MediaType`, and `CatalogueRefresher`, which re-fetches
   catalogue rows on request and in a nightly `@Scheduled` job.
 - **`recommend/`** — suggestions built from highly-scored entries, plus the cache table behind them.
-- **`stats/`** — native-SQL aggregates for the stats page.
+- **`stats/`** — native-SQL aggregates for the stats page and the year in review.
 - **`common/`** — `GlobalExceptionHandler` and the single `ApiError` response shape.
 - **`config/`** — `SecurityConfig`, `RestClientConfig`, `WebConfig` (case-insensitive enum query
   parameters, so the SPA can use `?type=movie`).
@@ -213,6 +213,7 @@ All under `/api`, all JSON, all errors as `{error, message, details?}`.
 | `POST` | `/entries/{id}/refresh` | Provider titles only. Re-fetches the shared row unless it was fetched in the last 10 minutes. |
 | `GET` | `/recommendations?type=&refresh=` | Built from your best-scored titles. Cached per user and type. |
 | `GET` | `/stats?tz=` | Gap-filled buckets. `tz` is the browser's IANA zone (UTC if absent), used to bucket finishes by month. |
+| `GET` | `/stats/years/{year}?tz=` | One calendar year of finishes, starting at midnight on 1 January in `tz`. |
 
 `PUT /entries/{id}` replaces **every** editable field — a `null` clears it. There is no partial
 patch, so the client always sends the whole editable set; `PATCH /entries/{id}/status` exists for the
@@ -225,7 +226,7 @@ still clears it.
 wrong day for anyone finishing something late in the evening. Which day an instant falls on is
 decided where it's shown: `ItemPage` converts to the local day for its date input (a newly picked
 day is stored as local midday; an untouched one keeps its exact moment), and `/stats` buckets in the
-`tz` the SPA sends. Only region ids are accepted for `tz`: Java takes `+05:00` too, but Postgres
+`tz` the SPA sends, and so does the year in review, whose year runs midnight to midnight there. Only region ids are accepted for `tz`: Java takes `+05:00` too, but Postgres
 reads offsets with POSIX's inverted sign. `startedOn` is still a plain date, since the server never
 fills it in. `V4` converted existing dates to midday UTC, which is the same day from UTC-12 to UTC+11.
 
@@ -285,7 +286,7 @@ Dark by deliberate choice, built around the artwork. The rules, which are worth 
 
 ## Testing
 
-Backend (109 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
+Backend (113 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
 **singleton container pattern** on purpose. JUnit's `@Testcontainers`/`@Container` pair stops the
 container when the first test class finishes, leaving every class after it talking to a dead
 database; a static initialiser that never stops it avoids that. `TmdbProviderTest` and
@@ -297,7 +298,7 @@ that level is the scoring, the exclusions and the caching; `CatalogueRefresherTe
 tests is mostly what happens to sessions. `TmdbProviderTest` binds `MockRestServiceServer` with
 `ignoreExpectOrder(true)` since seeds arrive in parallel.
 
-Frontend (43 tests): Vitest + React Testing Library, with MSW stubbing the API
+Frontend (52 tests): Vitest + React Testing Library, with MSW stubbing the API
 (`src/test/server.ts`). `npm run build` type-checks test files too, so a type error in a test breaks
 the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
 
@@ -316,5 +317,8 @@ the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
   through the CSSOM, which `style-src 'self'` doesn't block.
 - `RestClient.Builder` mutates in place, so the providers each `clone()` the shared bean before
   setting a base URL.
+- "Hours of film" on the stats pages counts finished films only. TMDB's TV episode lengths are
+  mostly empty and IGDB has no playtime, so a wider total would be a guess. Films without a running
+  time are counted and the page says the total leaves them out.
 - Recommendations are only as good as the scores behind them, and a library added entirely by hand
   can never produce any. That is a property of the design, not a bug to fix.

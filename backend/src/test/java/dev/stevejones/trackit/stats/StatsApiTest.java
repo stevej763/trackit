@@ -49,6 +49,11 @@ class StatsApiTest extends IntegrationTest {
     }
 
     private long add(AppUserPrincipal principal, String type, String status, String title) throws Exception {
+        return add(principal, type, status, java.util.Map.of("title", title));
+    }
+
+    private long add(AppUserPrincipal principal, String type, String status, java.util.Map<String, ?> manual)
+            throws Exception {
         String response = mockMvc.perform(post("/api/entries")
                         .with(user(principal))
                         .with(csrf())
@@ -56,7 +61,7 @@ class StatsApiTest extends IntegrationTest {
                         .content(objectMapper.writeValueAsString(java.util.Map.of(
                                 "mediaType", type,
                                 "status", status,
-                                "manual", java.util.Map.of("title", title)))))
+                                "manual", manual))))
                 .andExpect(status().isCreated())
                 .andReturn()
                 .getResponse()
@@ -166,6 +171,105 @@ class StatsApiTest extends IntegrationTest {
             mockMvc.perform(get("/api/stats").param("tz", tz).with(user(steve)))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.error").value("bad_request"));
+        }
+    }
+
+    @Test
+    void addsUpFilmTimeAndGenresAcrossTheLibrary() throws Exception {
+        Instant now = Instant.now();
+        long heat = add(steve, "MOVIE", "WANT", java.util.Map.of(
+                "title", "Heat", "runtimeMinutes", 170, "genres", java.util.List.of("Crime", "Drama")));
+        long untimed = add(steve, "MOVIE", "WANT", java.util.Map.of(
+                "title", "A film with no runtime", "genres", java.util.List.of("Drama")));
+        // Unfinished, so its running time doesn't count, but its genre does.
+        add(steve, "MOVIE", "WANT", java.util.Map.of(
+                "title", "Not watched yet", "runtimeMinutes", 90, "genres", java.util.List.of("Drama")));
+        long show = add(steve, "TV", "WANT", java.util.Map.of(
+                "title", "A show", "genres", java.util.List.of("Crime")));
+
+        score(steve, heat, 8, now);
+        score(steve, untimed, 6, now);
+        score(steve, show, 10, now);
+
+        mockMvc.perform(get("/api/stats").with(user(steve)))
+                .andExpect(status().isOk())
+                // Finished films only: the show and the unwatched film add nothing.
+                .andExpect(jsonPath("$.filmTime.minutes").value(170))
+                .andExpect(jsonPath("$.filmTime.filmsWithoutRuntime").value(1))
+                // Most-tracked first; the average ignores the unscored film.
+                .andExpect(jsonPath("$.genres[0].name").value("Drama"))
+                .andExpect(jsonPath("$.genres[0].count").value(3))
+                .andExpect(jsonPath("$.genres[0].average").value(7.0))
+                .andExpect(jsonPath("$.genres[1].name").value("Crime"))
+                .andExpect(jsonPath("$.genres[1].count").value(2))
+                .andExpect(jsonPath("$.genres[1].average").value(9.0))
+                .andExpect(jsonPath("$.years[0]").value(LocalDate.now(ZoneOffset.UTC).getYear()));
+    }
+
+    @Test
+    void reviewsOneYearOfFinishes() throws Exception {
+        int lastYear = LocalDate.now(ZoneOffset.UTC).getYear() - 1;
+        Instant march = Instant.parse(lastYear + "-03-15T12:00:00Z");
+        Instant july = Instant.parse(lastYear + "-07-15T12:00:00Z");
+
+        long heat = add(steve, "MOVIE", "WANT", java.util.Map.of("title", "Heat", "runtimeMinutes", 170));
+        long thief = add(steve, "MOVIE", "WANT", java.util.Map.of("title", "Thief", "runtimeMinutes", 123));
+        long game = add(steve, "GAME", "WANT", "A game");
+        long thisYear = add(steve, "MOVIE", "WANT", java.util.Map.of("title", "This year", "runtimeMinutes", 100));
+        long annas = add(anna, "MOVIE", "WANT", "Anna's film");
+
+        score(steve, heat, 9, march);
+        score(steve, thief, 7, july);
+        score(steve, game, 10, july);
+        score(steve, thisYear, 10, Instant.now());
+        score(anna, annas, 10, march);
+
+        mockMvc.perform(get("/api/stats/years/" + lastYear).with(user(steve)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.year").value(lastYear))
+                .andExpect(jsonPath("$.finished").value(3))
+                .andExpect(jsonPath("$.averageRating").value(8.7))
+                .andExpect(jsonPath("$.byMediaType[?(@.key=='MOVIE')].count").value(2))
+                .andExpect(jsonPath("$.byMediaType[?(@.key=='GAME')].count").value(1))
+                .andExpect(jsonPath("$.byMediaType[?(@.key=='TV')].count").value(0))
+                // January to December, whatever month it is now.
+                .andExpect(jsonPath("$.byMonth.length()").value(12))
+                .andExpect(jsonPath("$.byMonth[0].key").value(lastYear + "-01"))
+                .andExpect(jsonPath("$.byMonth[2].count").value(1))
+                .andExpect(jsonPath("$.byMonth[6].count").value(2))
+                .andExpect(jsonPath("$.filmTime.minutes").value(293))
+                // Best first, and only this user's, and only that year's.
+                .andExpect(jsonPath("$.best.length()").value(3))
+                .andExpect(jsonPath("$.best[0].title").value("A game"))
+                .andExpect(jsonPath("$.best[0].rating").value(10))
+                .andExpect(jsonPath("$.best[1].title").value("Heat"))
+                .andExpect(jsonPath("$.best[2].title").value("Thief"))
+                .andExpect(jsonPath("$.years[0]").value(lastYear + 1))
+                .andExpect(jsonPath("$.years[1]").value(lastYear));
+    }
+
+    @Test
+    void startsTheYearAtMidnightWhereTheUserIs() throws Exception {
+        // Half past eleven on New Year's Eve in UTC is already the next
+        // morning in Auckland, so the finish belongs to a different year.
+        long film = add(steve, "MOVIE", "WANT", "A film");
+        score(steve, film, 8, Instant.parse("2025-12-31T23:30:00Z"));
+
+        mockMvc.perform(get("/api/stats/years/2026?tz=Pacific/Auckland").with(user(steve)))
+                .andExpect(jsonPath("$.finished").value(1))
+                .andExpect(jsonPath("$.byMonth[0].count").value(1));
+        mockMvc.perform(get("/api/stats/years/2025?tz=Pacific/Auckland").with(user(steve)))
+                .andExpect(jsonPath("$.finished").value(0));
+        mockMvc.perform(get("/api/stats/years/2025").with(user(steve)))
+                .andExpect(jsonPath("$.finished").value(1))
+                .andExpect(jsonPath("$.byMonth[11].count").value(1));
+    }
+
+    @Test
+    void rejectsAYearItCannotCount() throws Exception {
+        for (String year : new String[] {"0", "99999", "last"}) {
+            mockMvc.perform(get("/api/stats/years/" + year).with(user(steve)))
+                    .andExpect(status().isBadRequest());
         }
     }
 }

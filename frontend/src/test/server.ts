@@ -1,6 +1,15 @@
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import type { Entry, EntryPage, Recommendation, Recommendations, User } from '../api/types';
+import type {
+  Bucket,
+  Entry,
+  EntryPage,
+  Recommendation,
+  Recommendations,
+  Stats,
+  User,
+  YearInReview,
+} from '../api/types';
 
 export const steve: User = { id: 1, username: 'steve' };
 
@@ -67,6 +76,70 @@ export function makeRecommendations(overrides: Partial<Recommendations> = {}): R
   };
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function months(year: number, counts: Record<number, number> = {}): Bucket[] {
+  return MONTHS.map((label, index) => ({
+    key: `${year}-${String(index + 1).padStart(2, '0')}`,
+    label,
+    count: counts[index] ?? 0,
+  }));
+}
+
+const BY_TYPE: Bucket[] = [
+  { key: 'MOVIE', label: 'Films', count: 2 },
+  { key: 'TV', label: 'TV', count: 1 },
+  { key: 'GAME', label: 'Games', count: 0 },
+];
+
+export function makeStats(overrides: Partial<Stats> = {}): Stats {
+  return {
+    totalItems: 3,
+    ratedItems: 2,
+    averageRating: 8,
+    byMediaType: BY_TYPE,
+    byStatus: [
+      { key: 'WANT', label: 'Want to start', count: 1 },
+      { key: 'IN_PROGRESS', label: 'In progress', count: 0 },
+      { key: 'ON_HOLD', label: 'On hold', count: 0 },
+      { key: 'COMPLETED', label: 'Finished', count: 2 },
+      { key: 'DROPPED', label: 'Gave up', count: 0 },
+    ],
+    ratingHistogram: Array.from({ length: 10 }, (_, index) => ({
+      key: String(index + 1),
+      label: String(index + 1),
+      count: index === 7 ? 2 : 0,
+    })),
+    finishedByMonth: months(2026, { 9: 2 }),
+    averageRatingByMediaType: [],
+    filmTime: { minutes: 293, filmsWithoutRuntime: 0 },
+    genres: [
+      { name: 'Drama', count: 3, average: 7.5 },
+      { name: 'Crime', count: 1, average: null },
+    ],
+    years: [2026, 2025],
+    ...overrides,
+  };
+}
+
+export function makeYear(overrides: Partial<YearInReview> = {}): YearInReview {
+  return {
+    year: 2025,
+    years: [2026, 2025],
+    finished: 3,
+    averageRating: 8.7,
+    byMediaType: BY_TYPE,
+    byMonth: months(2025, { 2: 1, 6: 2 }),
+    filmTime: { minutes: 293, filmsWithoutRuntime: 1 },
+    genres: [{ name: 'Crime', count: 2, average: 8 }],
+    best: [
+      { entryId: 7, title: 'Heat', mediaType: 'MOVIE', posterUrl: null, rating: 9 },
+      { entryId: 8, title: 'Thief', mediaType: 'MOVIE', posterUrl: null, rating: 7 },
+    ],
+    ...overrides,
+  };
+}
+
 /** Remembers the query string of every /api/entries call, for URL-sync assertions. */
 export const entriesRequests: string[] = [];
 
@@ -78,4 +151,8 @@ export const server = setupServer(
     return HttpResponse.json(makePage([makeEntry()]));
   }),
   http.get('/api/recommendations', () => HttpResponse.json(makeRecommendations())),
+  http.get('/api/stats', () => HttpResponse.json(makeStats())),
+  http.get('/api/stats/years/:year', ({ params }) =>
+    HttpResponse.json(makeYear({ year: Number(params.year) })),
+  ),
 );

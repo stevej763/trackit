@@ -13,6 +13,7 @@ import type {
   Stats,
   UpdateEntryPayload,
   User,
+  YearInReview,
 } from './types';
 
 /** A failed API call, carrying the server's own message so the UI can show it. */
@@ -146,14 +147,17 @@ export const api = {
   search: (query: string, type: MediaType) =>
     request<SearchResult[]>(`/search?q=${encodeURIComponent(query)}&type=${type.toLowerCase()}`),
 
-  // The browser's zone decides which month each finish falls in.
-  stats: () =>
-    request<Stats>(
-      `/stats?tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`,
-    ),
+  // The browser's zone decides which month, and which year, each finish falls in.
+  stats: () => request<Stats>(`/stats?tz=${browserZone()}`),
+
+  yearInReview: (year: number) => request<YearInReview>(`/stats/years/${year}?tz=${browserZone()}`),
 
   recommendations: (type: MediaType, refresh = false) =>
     request<Recommendations>(
       `/recommendations?type=${type.toLowerCase()}${refresh ? '&refresh=true' : ''}`,
     ),
 };
+
+function browserZone(): string {
+  return encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone);
+}

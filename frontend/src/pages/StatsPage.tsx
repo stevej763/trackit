@@ -1,71 +1,13 @@
 import { Link } from 'react-router-dom';
 import { useStats } from '../api/hooks';
-import type { Bucket } from '../api/types';
 import Bars from '../components/Bars';
 import Columns from '../components/Columns';
 import EmptyState from '../components/EmptyState';
+import FilmTimeTile from '../components/FilmTimeTile';
+import GenreTable from '../components/GenreTable';
+import { Panel, ValueTable } from '../components/StatPanel';
 import StatTile from '../components/StatTile';
-
-function Panel({
-  heading,
-  note,
-  children,
-}: {
-  heading: string;
-  note?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-edge p-5 sm:p-6">
-      <h2 className="text-lg">{heading}</h2>
-      {note ? <p className="mt-1 mb-5 text-sm text-paper-dim">{note}</p> : <div className="mb-5" />}
-      {children}
-    </section>
-  );
-}
-
-/** The accessible fallback the charts lean on: every value, in order. */
-function ValueTable({
-  caption,
-  rowHeading,
-  buckets,
-}: {
-  caption: string;
-  rowHeading: string;
-  buckets: Bucket[];
-}) {
-  return (
-    <details className="mt-4">
-      <summary className="cursor-pointer text-sm text-paper-dim hover:text-paper">
-        {caption}
-      </summary>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-edge text-paper-dim">
-              <th scope="col" className="py-1 text-left font-normal">
-                {rowHeading}
-              </th>
-              <th scope="col" className="py-1 text-right font-normal">
-                Titles
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {buckets.map((bucket) => (
-              <tr key={bucket.key} className="border-b border-edge/50">
-                <th scope="row" className="py-1 text-left font-normal">
-                  {bucket.label}
-                </th>
-                <td className="py-1 text-right tabular-nums">{bucket.count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  );
-}
+import YearLinks from '../components/YearLinks';
 
 export default function StatsPage() {
   const { data: stats, isPending, isError } = useStats();
@@ -105,13 +47,17 @@ export default function StatsPage() {
       <div>
         <h1 className="text-2xl">Stats</h1>
         <p className="mt-1 text-paper-dim">Your library, counted up.</p>
+        <div className="mt-4">
+          <YearLinks years={stats.years} />
+        </div>
       </div>
 
-      <section className="grid grid-cols-2 gap-6 rounded-lg border border-edge p-5 sm:grid-cols-4 sm:p-6">
+      <section className="grid grid-cols-2 gap-6 rounded-lg border border-edge p-5 sm:grid-cols-3 sm:p-6 lg:grid-cols-5">
         <StatTile value={stats.totalItems} label="titles tracked" />
         <StatTile value={stats.ratedItems} label="scored" />
         <StatTile value={stats.averageRating ?? '--'} label="average score" />
         <StatTile value={finishedThisYear} label="finished in 12 months" />
+        <FilmTimeTile filmTime={stats.filmTime} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -143,6 +89,15 @@ export default function StatsPage() {
         />
         <ValueTable caption="See the numbers" rowHeading="Month" buckets={stats.finishedByMonth} />
       </Panel>
+
+      {stats.genres.length > 0 ? (
+        <Panel
+          heading="What you are into"
+          note="Your most-tracked genres, and how well each one scores with you. A title can have several."
+        >
+          <GenreTable genres={stats.genres} />
+        </Panel>
+      ) : null}
 
       {stats.averageRatingByMediaType.length > 1 ? (
         <Panel heading="Where you are most generous" note="Average score by kind of thing.">
