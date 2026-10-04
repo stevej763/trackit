@@ -1,33 +1,20 @@
-services:
+# The production shape: api, web and backup against whatever Postgres DB_HOST
+# names. compose.override.yaml, which plain `docker compose` merges in on its
+# own, adds a local Postgres for development. For prod against an external
+# database, set COMPOSE_FILE=compose.yaml in .env so the override is skipped,
+# and point DB_HOST at it.
 
-  db:
-    image: postgres:16-alpine
-    container_name: trackit-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-trackit}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trackit}
-      POSTGRES_DB: ${POSTGRES_DB:-trackit}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trackit} -d ${POSTGRES_DB:-trackit}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+services:
 
   api:
     build:
       context: ./backend
     container_name: trackit-api
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     # No host port: nginx in the web service is the only way in, which keeps the
     # session cookie same-origin and means there is no CORS to configure.
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-trackit}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${DB_HOST:-db}:${DB_PORT:-5432}/${POSTGRES_DB:-trackit}?sslmode=${DB_SSLMODE:-prefer}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-trackit}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-trackit}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
@@ -37,6 +24,9 @@ services:
       TRACKIT_ALLOW_SIGNUP: ${TRACKIT_ALLOW_SIGNUP:-true}
       TRACKIT_METADATA_REFRESH_CRON: ${TRACKIT_METADATA_REFRESH_CRON:-0 30 4 * * *}
       TRACKIT_LOG_LEVEL: ${TRACKIT_LOG_LEVEL:-INFO}
+    # Lets DB_HOST=host.docker.internal reach a Postgres on the Docker host itself.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
       interval: 10s
@@ -58,20 +48,29 @@ services:
   # A pg_dump every BACKUP_INTERVAL_HOURS into ./backups on the host, keeping
   # BACKUP_KEEP_DAYS of them. Restoring is in backup/backup.sh. Copy ./backups
   # somewhere off this machine too: a backup on the same disk isn't one.
+  #
+  # pg_dump refuses to dump a server newer than itself, so BACKUP_PG_VERSION must
+  # be at least the major version of the Postgres it points at.
   backup:
-    image: postgres:16-alpine
+    image: postgres:${BACKUP_PG_VERSION:-16}-alpine
     container_name: trackit-backup
     restart: unless-stopped
+    # Waiting for the api means Flyway has run, so the first dump isn't of an
+    # empty database.
     depends_on:
-      db:
+      api:
         condition: service_healthy
     environment:
-      PGHOST: db
+      PGHOST: ${DB_HOST:-db}
+      PGPORT: ${DB_PORT:-5432}
+      PGSSLMODE: ${DB_SSLMODE:-prefer}
       PGUSER: ${POSTGRES_USER:-trackit}
       PGPASSWORD: ${POSTGRES_PASSWORD:-trackit}
       PGDATABASE: ${POSTGRES_DB:-trackit}
       BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backups:/backups
       - ./backup/backup.sh:/usr/local/bin/trackit-backup:ro
@@ -95,5 +94,4 @@ services:
     command: ["mvn", "-B", "test"]
 
 volumes:
-  db_data:
   maven_cache:

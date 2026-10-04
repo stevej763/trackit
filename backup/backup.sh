@@ -3,9 +3,13 @@
 # BACKUP_INTERVAL_HOURS into /backups (./backups on the host), deleting dumps
 # older than BACKUP_KEEP_DAYS. Connection settings come from the PG* variables.
 #
-# Restore one with:
-#   docker compose exec -T db pg_restore -U trackit -d trackit --clean --if-exists \
+# Restore one with this service's own pg_restore, which works against the local
+# db container and an external DB_HOST alike (stop the api first):
+#   docker compose stop api
+#   docker compose run --rm -T --no-deps --entrypoint sh backup \
+#     -c 'pg_restore --clean --if-exists --no-owner -d "$PGDATABASE"' \
 #     < backups/trackit-20261004T043000Z.dump
+#   docker compose start api
 set -eu
 
 interval_hours="${BACKUP_INTERVAL_HOURS:-24}"

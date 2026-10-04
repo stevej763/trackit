@@ -39,12 +39,37 @@ Both are free. TMDB covers films and TV; IGDB covers games.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `TRACKIT_PORT` | `8300` | Host port the app is served on. |
+| `DB_HOST` / `DB_PORT` | `db` / `5432` | Where Postgres is. `db` is the local container; see [Production](#production-with-an-external-database). |
+| `DB_SSLMODE` | `prefer` | `require` or stricter for a database across a network. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `trackit` | Change the password before putting this anywhere real. |
 | `TRACKIT_SECURE_COOKIE` | `false` | Set to `true` only behind HTTPS. A `Secure` cookie is dropped over plain HTTP, which makes signing in fail silently. |
 | `TRACKIT_ALLOW_SIGNUP` | `true` | `false` stops new accounts. Existing ones still sign in. |
 | `TRACKIT_METADATA_REFRESH_CRON` | `0 30 4 * * *` | When to re-fetch details likely to have changed (season counts, recent release years), in UTC. `-` turns it off. |
 | `BACKUP_INTERVAL_HOURS` / `BACKUP_KEEP_DAYS` | `24` / `14` | How often the backup service dumps the database, and how long dumps are kept. |
+| `BACKUP_PG_VERSION` | `16` | The backup's `pg_dump` version. At least your Postgres server's major version. |
 | `TRACKIT_LOG_LEVEL` | `INFO` | `DEBUG` for more detail on provider calls. |
+
+### Production with an external database
+
+`compose.yaml` runs the app against whatever Postgres `DB_HOST` names.
+`compose.override.yaml`, which plain `docker compose` merges in automatically,
+adds the local `db` container. To use your own Postgres instead:
+
+1. Create the database and an owner for it on that server:
+   ```sql
+   CREATE ROLE trackit LOGIN PASSWORD '...';
+   CREATE DATABASE trackit OWNER trackit;
+   ```
+   The api creates the tables (and the `citext` extension) on its first start.
+2. In `.env`, uncomment `COMPOSE_FILE=compose.yaml`, so the override is skipped
+   and no `db` container is created, then set `DB_HOST`, `DB_PORT`,
+   `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`, and usually
+   `DB_SSLMODE=require`. For a Postgres on the Docker host itself, use
+   `DB_HOST=host.docker.internal`.
+3. Set `BACKUP_PG_VERSION` to the server's major version (or newer).
+4. `docker compose up -d --build`.
+
+Behind an HTTPS reverse proxy, also set `TRACKIT_SECURE_COOKIE=true`.
 
 ## What it does
 
@@ -85,15 +110,20 @@ cd frontend && npm run lint && npm run build
 
 ## Backups
 
-Everything lives in the `db_data` volume. The `backup` service writes a
-`pg_dump` of it to `./backups` when it starts and every 24 hours after that,
-keeping two weeks of dumps. Copy that folder somewhere off the machine too.
+Everything lives in Postgres: the `db_data` volume locally, or your external
+server. The `backup` service writes a `pg_dump` of it to `./backups` when it
+starts and every 24 hours after that, keeping two weeks of dumps. Copy that
+folder somewhere off the machine too.
 
-To restore one:
+To restore one (against either database, through the backup service's own
+client):
 
 ```sh
-docker compose exec -T db pg_restore -U trackit -d trackit --clean --if-exists \
+docker compose stop api
+docker compose run --rm -T --no-deps --entrypoint sh backup \
+  -c 'pg_restore --clean --if-exists --no-owner -d "$PGDATABASE"' \
   < backups/trackit-20261004T043000Z.dump
+docker compose start api
 ```
 
 Each user can also download their own library from the Account page.

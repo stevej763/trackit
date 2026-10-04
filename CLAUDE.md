@@ -12,6 +12,15 @@ the catalogue of titles is shared so metadata is fetched once.
 Three services, composed: a Spring Boot API, PostgreSQL, and a React SPA served by nginx. A fourth,
 `backup`, runs `pg_dump` into `./backups` on an interval (`backup/backup.sh`, restore steps inside).
 
+`compose.yaml` is the production shape: `api`, `web` and `backup`, pointed at whatever Postgres
+`DB_HOST`/`DB_PORT` name (with `DB_SSLMODE`). `compose.override.yaml`, auto-merged by plain
+`docker compose`, adds the local `db` container and makes `api` wait for it. A prod deploy against
+an external database sets `COMPOSE_FILE=compose.yaml` in `.env` so the override is skipped. The
+database and its owning role must already exist there; Flyway creates everything inside it, including
+`citext` (a trusted extension, so the database owner can create it without being a superuser).
+`backup` waits for `api` to be healthy, so Flyway has run before the first dump, and its image is
+`postgres:${BACKUP_PG_VERSION}`, which must be at least the server's major version.
+
 ## Commands
 
 Run everything with Docker (the primary workflow — there is no Java or Maven on the dev machine):
@@ -22,12 +31,14 @@ docker compose up --build
 ```
 
 Visit `http://localhost:8300` (`TRACKIT_PORT`). Only the `web` service publishes a host port; `api`
-is reachable only through nginx's `/api/` proxy, and `db` only from inside the compose network.
+is reachable only through nginx's `/api/` proxy, and the local `db` only from inside the compose
+network.
 
 ```sh
 docker compose logs -f api              # backend logs
 docker compose run --rm api-test        # backend tests (mounts the docker socket for Testcontainers)
-docker compose exec db psql -U trackit -d trackit
+docker compose exec db psql -U trackit -d trackit   # local db only
+docker compose run --rm --no-deps --entrypoint psql backup   # whichever DB_HOST points at
 docker compose restart api              # sessions survive this; they live in Postgres
 ```
 

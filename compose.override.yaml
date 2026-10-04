@@ -1,0 +1,34 @@
+# Merged on top of compose.yaml by plain `docker compose` (Compose's standard
+# override file, no -f needed): a local Postgres for development, and the api
+# waiting for it. A prod deploy against an external database skips this file by
+# setting COMPOSE_FILE=compose.yaml in .env. Either way the database must exist
+# before the api starts; Flyway creates the schema, not the instance.
+#
+# db publishes no host port: reach it with
+#   docker compose exec db psql -U trackit -d trackit
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: trackit-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trackit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trackit}
+      POSTGRES_DB: ${POSTGRES_DB:-trackit}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trackit} -d ${POSTGRES_DB:-trackit}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
