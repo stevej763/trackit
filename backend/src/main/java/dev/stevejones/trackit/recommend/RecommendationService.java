@@ -84,11 +84,15 @@ public class RecommendationService {
         String fingerprint = fingerprintOf(seeds);
         Optional<RecommendationCache> cached = caches.findByUserIdAndMediaType(userId, mediaType);
 
+        // Read on every request, cached or not: adding a title without scoring it
+        // leaves the fingerprint alone, so a cached list can still contain it.
+        Set<String> alreadyTracked = new HashSet<>(entries.findAllTrackedExternalIds(userId, mediaType));
+
         if (!forceRefresh && cached.isPresent() && isFresh(cached.get(), fingerprint)) {
             Optional<List<Recommendation>> items = deserialise(cached.get());
             if (items.isPresent()) {
                 return new RecommendationsResponse(
-                        mediaType, items.get(), seeds.size(), ratedCount,
+                        mediaType, untracked(items.get(), alreadyTracked), seeds.size(), ratedCount,
                         MINIMUM_SEED_RATING, cached.get().getComputedAt(), true);
             }
         }
@@ -102,7 +106,7 @@ public class RecommendationService {
 
         List<Recommendation> items;
         try {
-            items = compute(userId, mediaType, seeds);
+            items = compute(mediaType, seeds, alreadyTracked);
         } catch (ProviderException ex) {
             // A stale list beats an error page, so serve the last good one if
             // there is one and let the caller see how old it is.
@@ -110,7 +114,7 @@ public class RecommendationService {
             if (fallback.isPresent()) {
                 log.warn("Serving cached recommendations; provider unavailable: {}", ex.getMessage());
                 return new RecommendationsResponse(
-                        mediaType, fallback.get(), seeds.size(), ratedCount,
+                        mediaType, untracked(fallback.get(), alreadyTracked), seeds.size(), ratedCount,
                         MINIMUM_SEED_RATING, cached.get().getComputedAt(), true);
             }
             throw ex;
@@ -121,7 +125,7 @@ public class RecommendationService {
                 mediaType, items, seeds.size(), ratedCount, MINIMUM_SEED_RATING, Instant.now(), false);
     }
 
-    private List<Recommendation> compute(Long userId, MediaType mediaType, List<Entry> seeds) {
+    private List<Recommendation> compute(MediaType mediaType, List<Entry> seeds, Set<String> alreadyTracked) {
         Map<String, Entry> seedsByExternalId = new LinkedHashMap<>();
         for (Entry seed : seeds) {
             seedsByExternalId.put(seed.getMediaItem().getExternalId(), seed);
@@ -131,7 +135,6 @@ public class RecommendationService {
                 .forType(mediaType)
                 .recommendationsFor(mediaType, List.copyOf(seedsByExternalId.keySet()));
 
-        Set<String> alreadyTracked = new HashSet<>(entries.findAllTrackedExternalIds(userId, mediaType));
         Map<String, Candidate> candidates = new LinkedHashMap<>();
 
         bySeed.forEach((seedExternalId, results) -> {
@@ -156,6 +159,10 @@ public class RecommendationService {
                 .limit(MAX_RESULTS)
                 .map(Candidate::toRecommendation)
                 .toList();
+    }
+
+    private static List<Recommendation> untracked(List<Recommendation> items, Set<String> alreadyTracked) {
+        return items.stream().filter(item -> !alreadyTracked.contains(item.externalId())).toList();
     }
 
     private void store(
@@ -190,7 +197,7 @@ public class RecommendationService {
         } catch (Exception ex) {
             // The record shape changed under an old payload. Treat it as a miss
             // rather than failing every request until the row is cleared.
-            log.warn("Discarding unreadable cached recommendations for user {}", cache.getId());
+            log.warn("Discarding unreadable cached recommendations (cache row {})", cache.getId());
             return Optional.empty();
         }
     }

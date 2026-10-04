@@ -234,6 +234,82 @@ class TmdbProviderTest {
     }
 
     @Test
+    void keepsTheOtherSeedsWhenOneFails() throws IOException {
+        // A title TMDB has since removed must not take every other seed down with it.
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/1/recommendations")))
+                .andRespond(withResourceNotFound());
+        server.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/693134/recommendations")))
+                .andRespond(withSuccess(fixture("tmdb-movie-recommendations.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        Map<String, List<SearchResult>> bySeed =
+                provider.recommendationsFor(MediaType.MOVIE, List.of("1", "693134"));
+
+        assertThat(bySeed).containsOnlyKeys("693134");
+        server.verify();
+    }
+
+    @Test
+    void failsOnlyWhenEverySeedFails() {
+        server.expect(org.springframework.test.web.client.ExpectedCount.twice(), MockRestRequestMatchers.anything())
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+        assertThatThrownBy(() -> provider.recommendationsFor(MediaType.MOVIE, List.of("1", "2")))
+                .isInstanceOf(ProviderException.class)
+                .hasMessageContaining("rate-limiting");
+    }
+
+    @Test
+    void refusesIdsThatAreNotPlainNumbers() {
+        // The id becomes a path segment, so these would fetch some other resource
+        // and file it in the shared catalogue under the wrong id.
+        for (String id : List.of("550/credits", "1/../../tv/1399", "", "12345678901")) {
+            assertThatThrownBy(() -> provider.fetchDetails(MediaType.MOVIE, id))
+                    .isInstanceOf(ProviderException.class)
+                    .hasMessageContaining("TMDB id");
+        }
+        assertThat(provider.recommendationsFor(MediaType.MOVIE, List.of("550/credits"))).isEmpty();
+
+        // Nothing was sent.
+        server.verify();
+    }
+
+    @Test
+    void sendsAReadAccessTokenAsABearerHeaderAndNotInTheUrl() throws IOException {
+        String token = "eyJhbGciOiJIUzI1NiJ9.e30.signature";
+        TmdbProperties withToken = new TmdbProperties(
+                token, PROPERTIES.baseUrl(), PROPERTIES.posterBaseUrl(), PROPERTIES.backdropBaseUrl());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer tokenServer = MockRestServiceServer.bindTo(builder).build();
+        TmdbProvider tokenProvider = new TmdbProvider(withToken, builder);
+
+        tokenServer.expect(requestTo(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("api_key"))))
+                .andExpect(MockRestRequestMatchers.header("Authorization", "Bearer " + token))
+                .andRespond(withSuccess(fixture("tmdb-search-movie.json"),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        assertThat(tokenProvider.search(MediaType.MOVIE, "dune")).hasSize(3);
+        tokenServer.verify();
+    }
+
+    @Test
+    void keepsTheKeyOutOfTheCauseOfANetworkFailure() {
+        server.expect(MockRestRequestMatchers.anything()).andRespond(request -> {
+            throw new java.net.ConnectException("Connection refused");
+        });
+
+        // The cause is logged, and a transport failure's own message quotes the URL.
+        assertThatThrownBy(() -> provider.search(MediaType.MOVIE, "dune"))
+                .isInstanceOf(ProviderException.class)
+                .hasMessageContaining("Couldn't reach TMDB")
+                .cause()
+                .isInstanceOf(java.net.ConnectException.class)
+                .hasMessageNotContaining("test-key");
+    }
+
+    @Test
     void supportsOnlyFilmAndTv() {
         assertThat(provider.supports(MediaType.MOVIE)).isTrue();
         assertThat(provider.supports(MediaType.TV)).isTrue();

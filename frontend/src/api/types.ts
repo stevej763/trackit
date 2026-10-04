@@ -30,7 +30,8 @@ export interface Entry {
   rating: number | null;
   review: string | null;
   startedOn: string | null;
-  finishedOn: string | null;
+  /** An instant (ISO 8601, UTC). Which day that is depends on the viewer's zone. */
+  finishedAt: string | null;
   createdAt: string;
   updatedAt: string;
   mediaItem: MediaItem;
@@ -127,7 +128,7 @@ export interface UpdateEntryPayload {
   rating: number | null;
   review: string | null;
   startedOn: string | null;
-  finishedOn: string | null;
+  finishedAt: string | null;
 }
 
 export interface CreateEntryPayload {

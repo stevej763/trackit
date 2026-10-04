@@ -37,16 +37,22 @@ public interface StatsRepository extends Repository<Entry, Long> {
             """, nativeQuery = true)
     List<KeyCount> countByRating(@Param("userId") Long userId);
 
-    /** Completions per calendar month, for the last 12 months including this one. */
+    /**
+     * Completions per calendar month in the given zone, for the last 12 months
+     * including this one. {@code timestamptz AT TIME ZONE} gives the wall-clock
+     * time there; applied to a plain timestamp it converts back to an instant.
+     */
     @Query(value = """
-            select to_char(date_trunc('month', e.finished_on), 'YYYY-MM') as key, count(*) as total
+            select to_char(date_trunc('month', e.finished_at at time zone :zone), 'YYYY-MM') as key,
+                   count(*) as total
             from entry e
             where e.user_id = :userId
-              and e.finished_on is not null
-              and e.finished_on >= date_trunc('month', current_date) - interval '11 months'
+              and e.finished_at is not null
+              and e.finished_at >= (date_trunc('month', now() at time zone :zone) - interval '11 months')
+                                   at time zone :zone
             group by 1
             """, nativeQuery = true)
-    List<KeyCount> countFinishedByMonth(@Param("userId") Long userId);
+    List<KeyCount> countFinishedByMonth(@Param("userId") Long userId, @Param("zone") String zone);
 
     @Query(value = """
             select mi.media_type as key, avg(e.rating) as average

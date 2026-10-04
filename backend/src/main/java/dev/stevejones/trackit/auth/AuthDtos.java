@@ -19,7 +19,9 @@ public final class AuthDtos {
             String username,
 
             @NotBlank
-            @Size(min = 8, max = 200, message = "Password must be at least 8 characters")
+            @Size(min = 8, message = "Password must be at least 8 characters")
+            @MaxUtf8Bytes(value = 72, message = "Password is too long. Keep it under 72 characters, "
+                    + "or fewer if it uses accented letters or emoji")
             String password) {
     }
 

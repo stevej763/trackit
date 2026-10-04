@@ -7,6 +7,7 @@ import dev.stevejones.trackit.stats.StatsRepository.KeyCount;
 import dev.stevejones.trackit.stats.StatsResponse.Average;
 import dev.stevejones.trackit.stats.StatsResponse.Bucket;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
@@ -32,7 +33,7 @@ public class StatsService {
     }
 
     @Transactional(readOnly = true)
-    public StatsResponse forUser(Long userId) {
+    public StatsResponse forUser(Long userId, ZoneId zone) {
         List<Bucket> byMediaType = fill(
                 repository.countByMediaType(userId),
                 MediaType.values(),
@@ -46,7 +47,8 @@ public class StatsService {
                 StatsService::statusLabel);
 
         List<Bucket> ratingHistogram = ratingHistogram(repository.countByRating(userId));
-        List<Bucket> finishedByMonth = finishedByMonth(repository.countFinishedByMonth(userId));
+        List<Bucket> finishedByMonth =
+                finishedByMonth(repository.countFinishedByMonth(userId, zone.getId()), zone);
 
         long totalItems = byStatus.stream().mapToLong(Bucket::count).sum();
         long ratedItems = ratingHistogram.stream().mapToLong(Bucket::count).sum();
@@ -100,12 +102,13 @@ public class StatsService {
         return buckets;
     }
 
-    private static List<Bucket> finishedByMonth(List<KeyCount> rows) {
+    private static List<Bucket> finishedByMonth(List<KeyCount> rows, ZoneId zone) {
         Map<String, Long> counts = rows.stream()
                 .collect(Collectors.toMap(KeyCount::getKey, KeyCount::getTotal));
 
         Map<String, Bucket> buckets = new LinkedHashMap<>();
-        LocalDate start = LocalDate.now().withDayOfMonth(1).minusMonths(MONTHS - 1L);
+        // "This month" in the user's zone, matching the query's bucketing.
+        LocalDate start = LocalDate.now(zone).withDayOfMonth(1).minusMonths(MONTHS - 1L);
         for (int offset = 0; offset < MONTHS; offset++) {
             LocalDate month = start.plusMonths(offset);
             String key = month.format(MONTH_KEY);

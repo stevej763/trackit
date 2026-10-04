@@ -210,6 +210,26 @@ class RecommendationApiTest extends IntegrationTest {
     }
 
     @Test
+    void dropsATitleFromACachedListOnceItIsAdded() throws Exception {
+        track(steveUser, MediaType.MOVIE, "1", "A seed", 9);
+        when(provider.recommendationsFor(any(), anyList())).thenReturn(Map.of(
+                "1", List.of(result("900", "Added from here"), result("901", "Still new"))));
+        mockMvc.perform(get("/api/recommendations?type=movie").with(user(steve)))
+                .andExpect(jsonPath("$.items.length()").value(2));
+
+        // Added unscored, so the seeds and the cache fingerprint don't change.
+        Entry added = track(steveUser, MediaType.MOVIE, "900", "Added from here", null);
+        added.setStatus(EntryStatus.WANT);
+        entries.save(added);
+
+        mockMvc.perform(get("/api/recommendations?type=movie").with(user(steve)))
+                .andExpect(jsonPath("$.fromCache").value(true))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].externalId").value("901"));
+        verify(provider, times(1)).recommendationsFor(any(), anyList());
+    }
+
+    @Test
     void reusesTheCacheUntilTheSeedsChange() throws Exception {
         track(steveUser, MediaType.MOVIE, "1", "A seed", 9);
         when(provider.recommendationsFor(any(), anyList()))

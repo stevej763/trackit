@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -34,6 +35,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> onConflict(ConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("conflict", ex.getMessage()));
+    }
+
+    /**
+     * A backstop for a write that lost a race to a unique constraint the code
+     * didn't anticipate. The specific cases are caught where they happen and
+     * given a better message; this keeps any other from becoming a 500.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiError> onDataIntegrityViolation(DataIntegrityViolationException ex) {
+        log.warn("Constraint violation: {}", ex.getMostSpecificCause().getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("conflict", "That clashes with something that already exists. Reload and try again."));
     }
 
     @ExceptionHandler(BadRequestException.class)

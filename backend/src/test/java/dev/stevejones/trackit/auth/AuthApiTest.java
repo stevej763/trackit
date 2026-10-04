@@ -76,6 +76,31 @@ class AuthApiTest extends IntegrationTest {
     }
 
     @Test
+    void rejectsAPasswordLongerThanBcryptCanHashInsteadOfFailing() throws Exception {
+        // 40 characters but 80 bytes: BCrypt's limit is in bytes, and the
+        // encoder throws past it, which used to surface as a 500.
+        String accented = "é".repeat(40);
+
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"steve\",\"password\":\"" + accented + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("validation_failed"))
+                .andExpect(jsonPath("$.details.password").value(
+                        org.hamcrest.Matchers.containsString("too long")));
+
+        assertThat(users.count()).isZero();
+
+        // Exactly 72 bytes is fine.
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"steve\",\"password\":\"" + "é".repeat(36) + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void rejectsUsernamesWithCharactersThatWouldBeAmbiguous() throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .with(csrf())

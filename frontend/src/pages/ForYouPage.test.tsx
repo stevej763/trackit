@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
@@ -80,6 +80,28 @@ describe('ForYouPage', () => {
     expect(screen.getByRole('button', { name: 'Films' })).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('asks the server to rebuild when Refresh is pressed, not for its cache', async () => {
+    const requests: string[] = [];
+    server.use(
+      http.get('/api/recommendations', ({ request }) => {
+        const url = new URL(request.url);
+        requests.push(url.search);
+        return HttpResponse.json(
+          url.searchParams.get('refresh') === 'true'
+            ? makeRecommendations({ items: [makeRecommendation({ title: 'Arrival', externalId: '329865' })] })
+            : makeRecommendations({ fromCache: true }),
+        );
+      }),
+    );
+    renderWithProviders(<ForYouPage />);
+    await screen.findByText('Dune');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByText('Arrival')).toBeInTheDocument();
+    await waitFor(() => expect(requests.at(-1)).toContain('refresh=true'));
+  });
+
   it('reports a suggestion as added once it is in the library', async () => {
     server.use(
       http.post('/api/entries', () => HttpResponse.json({ id: 9 }, { status: 201 })),
@@ -90,5 +112,25 @@ describe('ForYouPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(await screen.findByText('Added')).toBeInTheDocument();
+  });
+
+  it('marks only the added title, not one of another type sharing its id', async () => {
+    // TMDB numbers films and shows separately, so the same id can be both.
+    respondWith(
+      makeRecommendations({
+        items: [
+          makeRecommendation({ title: 'A film', mediaType: 'MOVIE', externalId: '100' }),
+          makeRecommendation({ title: 'A show', mediaType: 'TV', externalId: '100' }),
+        ],
+      }),
+    );
+    server.use(http.post('/api/entries', () => HttpResponse.json({ id: 9 }, { status: 201 })));
+    renderWithProviders(<ForYouPage />);
+    await screen.findByText('A film');
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Add' })[0]);
+
+    expect(await screen.findByText('Added')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Add' })).toHaveLength(1);
   });
 });

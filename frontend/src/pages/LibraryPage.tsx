@@ -59,8 +59,22 @@ export default function LibraryPage() {
   const [queryText, setQueryText] = useState(values.q);
   const debouncedQuery = useDebounced(queryText);
 
+  // When the URL's q changes from outside (the Library link, the back button)
+  // the box follows it. A change that came from the box itself is told apart
+  // by already matching the debounced value.
+  const [urlQuery, setUrlQuery] = useState(values.q);
+  if (values.q !== urlQuery) {
+    setUrlQuery(values.q);
+    if (values.q !== debouncedQuery) {
+      setQueryText(values.q);
+    }
+  }
+
   useEffect(() => {
-    if (debouncedQuery === values.q) {
+    // Only once typing has settled into the box's current value: straight
+    // after an outside change the debounced value is stale, and writing it
+    // back would undo that change.
+    if (debouncedQuery !== queryText || debouncedQuery === values.q) {
       return;
     }
     setSearchParams(
@@ -76,7 +90,7 @@ export default function LibraryPage() {
       },
       { replace: true },
     );
-  }, [debouncedQuery, values.q, setSearchParams]);
+  }, [debouncedQuery, queryText, values.q, setSearchParams]);
 
   const update = (changes: Partial<FilterValues>) => {
     if (changes.q !== undefined) {
@@ -130,8 +144,30 @@ export default function LibraryPage() {
     window.scrollTo({ top: 0 });
   };
 
-  const { data, isPending, isError, error } = useEntries({ ...values, page });
+  const { data, isPending, isPlaceholderData, isError, error } = useEntries({ ...values, page });
   const updateStatus = useUpdateStatus();
+
+  // Moving or removing the last title on the last page leaves that page empty;
+  // step back to the new last page rather than show "Page 3 of 2".
+  const lastPage = data ? Math.max(data.totalPages - 1, 0) : 0;
+  const pastTheEnd = Boolean(data && !isPlaceholderData && page > lastPage);
+  useEffect(() => {
+    if (!pastTheEnd) {
+      return;
+    }
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (lastPage > 0) {
+          next.set('page', String(lastPage));
+        } else {
+          next.delete('page');
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  }, [pastTheEnd, lastPage, setSearchParams]);
 
   const hasFilters = Boolean(values.type || values.status || values.minRating || values.q);
 
@@ -151,7 +187,7 @@ export default function LibraryPage() {
         </p>
       ) : null}
 
-      {data ? (
+      {data && !pastTheEnd ? (
         <>
           <p className="text-sm text-paper-dim" aria-live="polite">
             {describeResults(data.totalItems, values)}

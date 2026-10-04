@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ApiError } from '../api/client';
 import { useDeleteEntry, useEntry, useUpdateEntry } from '../api/hooks';
 import type { Entry, EntryStatus, UpdateEntryPayload } from '../api/types';
 import Button from '../components/Button';
@@ -12,7 +13,35 @@ interface Draft {
   rating: number | null;
   review: string;
   startedOn: string;
+  /** The local calendar day of finishedAt, as the date input wants it. */
   finishedOn: string;
+}
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+/** The day an instant falls on here, as YYYY-MM-DD. */
+function localDay(instant: string | null): string {
+  if (!instant) {
+    return '';
+  }
+  const date = new Date(instant);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * The instant to store for a finish day. An unchanged day keeps its exact
+ * moment; a newly picked one becomes midday local time, which stays on the
+ * same day if it's later viewed a few zones away.
+ */
+function finishedAtFor(day: string, entry: Entry): string | null {
+  if (!day) {
+    return null;
+  }
+  if (day === localDay(entry.finishedAt)) {
+    return entry.finishedAt;
+  }
+  const [year, month, date] = day.split('-').map(Number);
+  return new Date(year, month - 1, date, 12).toISOString();
 }
 
 const draftOf = (entry: Entry): Draft => ({
@@ -20,7 +49,7 @@ const draftOf = (entry: Entry): Draft => ({
   rating: entry.rating,
   review: entry.review ?? '',
   startedOn: entry.startedOn ?? '',
-  finishedOn: entry.finishedOn ?? '',
+  finishedOn: localDay(entry.finishedAt),
 });
 
 export default function ItemPage() {
@@ -28,7 +57,10 @@ export default function ItemPage() {
   const entryId = Number(id);
   const navigate = useNavigate();
 
-  const { data: entry, isPending, isError } = useEntry(entryId);
+  const { data: entry, isPending, isError, error } = useEntry(entryId);
+  // Held here rather than in VerdictForm, which remounts on every save and
+  // would lose the mutation's success along with it.
+  const updateEntry = useUpdateEntry(entryId);
   const deleteEntry = useDeleteEntry();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -41,9 +73,16 @@ export default function ItemPage() {
   }
 
   if (isError || !entry) {
+    const missing = error instanceof ApiError && error.status === 404;
     return (
       <div>
-        <p role="alert">That title isn&rsquo;t in your library.</p>
+        <p role="alert">
+          {missing ? (
+            <>That title isn&rsquo;t in your library.</>
+          ) : (
+            <>Couldn&rsquo;t load that title. {error instanceof Error ? error.message : null}</>
+          )}
+        </p>
         <Link to="/" className="mt-4 inline-block text-lamp underline underline-offset-4">
           Back to your library
         </Link>
@@ -92,7 +131,7 @@ export default function ItemPage() {
         {/* Keyed on the record's own timestamp: a successful save (or a change
             made elsewhere) remounts the form with the stored values, which
             keeps the draft in step without an effect that re-renders. */}
-        <VerdictForm key={`${entry.id}:${entry.updatedAt}`} entry={entry} />
+        <VerdictForm key={`${entry.id}:${entry.updatedAt}`} entry={entry} updateEntry={updateEntry} />
 
         <div className="order-1 flex flex-col gap-6 lg:order-2">
           {item.overview ? (
@@ -135,10 +174,18 @@ export default function ItemPage() {
   );
 }
 
-function VerdictForm({ entry }: { entry: Entry }) {
+function VerdictForm({
+  entry,
+  updateEntry,
+}: {
+  entry: Entry;
+  updateEntry: ReturnType<typeof useUpdateEntry>;
+}) {
   const stored = draftOf(entry);
   const [draft, setDraft] = useState<Draft>(stored);
-  const updateEntry = useUpdateEntry(entry.id);
+  // Only this version was saved here; a change made elsewhere since isn't.
+  const saved = updateEntry.data;
+  const justSaved = updateEntry.isSuccess && !!saved && saved.updatedAt === entry.updatedAt;
 
   const item = entry.mediaItem;
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
@@ -152,7 +199,7 @@ function VerdictForm({ entry }: { entry: Entry }) {
       rating: draft.rating,
       review: draft.review.trim() || null,
       startedOn: draft.startedOn || null,
-      finishedOn: draft.finishedOn || null,
+      finishedAt: finishedAtFor(draft.finishedOn, entry),
     };
     updateEntry.mutate(payload);
   };
@@ -226,7 +273,7 @@ function VerdictForm({ entry }: { entry: Entry }) {
           {updateEntry.isPending ? 'Saving...' : 'Save changes'}
         </Button>
         <span aria-live="polite" className="text-sm text-paper-dim">
-          {dirty ? 'Unsaved changes' : updateEntry.isSuccess ? 'Saved.' : ''}
+          {dirty ? 'Unsaved changes' : justSaved ? 'Saved.' : ''}
         </span>
       </div>
     </form>

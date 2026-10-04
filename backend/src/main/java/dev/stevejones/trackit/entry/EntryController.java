@@ -39,7 +39,7 @@ public class EntryController {
             "updated", "updatedAt",
             "title", "mediaItem.title",
             "rating", "rating",
-            "finished", "finishedOn",
+            "finished", "finishedAt",
             "year", "mediaItem.releaseYear");
 
     private final EntryService service;

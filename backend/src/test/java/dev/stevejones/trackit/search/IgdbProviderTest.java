@@ -50,8 +50,12 @@ class IgdbProviderTest {
         server.expect(ExpectedCount.once(),
                         requestTo(Matchers.startsWith("https://id.twitch.tv/oauth2/token")))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(requestTo(Matchers.containsString("client_id=client-id")))
-                .andExpect(requestTo(Matchers.containsString("grant_type=client_credentials")))
+                // Credentials go in the form body, never the URL, which can end up in a log.
+                .andExpect(requestTo("https://id.twitch.tv/oauth2/token"))
+                .andExpect(content().formDataContains(Map.of(
+                        "client_id", "client-id",
+                        "client_secret", "client-secret",
+                        "grant_type", "client_credentials")))
                 .andRespond(withSuccess(fixture("igdb-token.json"), org.springframework.http.MediaType.APPLICATION_JSON));
     }
 

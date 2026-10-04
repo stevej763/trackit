@@ -1,15 +1,16 @@
 package dev.stevejones.trackit.search;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * Holds the Twitch client-credentials token IGDB requires.
@@ -50,18 +51,19 @@ public class IgdbTokenStore {
                             + "or add the game by hand.");
         }
 
-        URI uri = UriComponentsBuilder.fromUriString(properties.tokenUrl())
-                .queryParam("client_id", properties.clientId())
-                .queryParam("client_secret", properties.clientSecret())
-                .queryParam("grant_type", "client_credentials")
-                .build()
-                .encode()
-                .toUri();
+        // A form body, not query parameters: a failed request's message quotes
+        // its URL, and that message ends up in the log.
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("client_id", properties.clientId());
+        form.add("client_secret", properties.clientSecret());
+        form.add("grant_type", "client_credentials");
 
         JsonNode response;
         try {
             response = restClient.post()
-                    .uri(uri)
+                    .uri(properties.tokenUrl())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
                     .retrieve()
                     .body(JsonNode.class);
         } catch (RestClientException ex) {

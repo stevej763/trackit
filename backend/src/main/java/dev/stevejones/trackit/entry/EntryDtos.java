@@ -54,7 +54,7 @@ public final class EntryDtos {
             @Min(1) @Max(10) Integer rating,
             @Size(max = 20000) String review,
             LocalDate startedOn,
-            LocalDate finishedOn) {
+            Instant finishedAt) {
     }
 
     /** The grid's quick status change. */
@@ -67,7 +67,7 @@ public final class EntryDtos {
             Integer rating,
             String review,
             LocalDate startedOn,
-            LocalDate finishedOn,
+            Instant finishedAt,
             Instant createdAt,
             Instant updatedAt,
             MediaItemResponse mediaItem) {
@@ -79,7 +79,7 @@ public final class EntryDtos {
                     entry.getRating(),
                     entry.getReview(),
                     entry.getStartedOn(),
-                    entry.getFinishedOn(),
+                    entry.getFinishedAt(),
                     entry.getCreatedAt(),
                     entry.getUpdatedAt(),
                     MediaItemResponse.from(entry.getMediaItem()));

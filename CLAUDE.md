@@ -44,7 +44,7 @@ Frontend without Docker (Node 20.19+):
 cd frontend
 npm install
 npm run dev        # :5173, proxies /api to localhost:8080 (see vite.config.ts)
-npm test           # Vitest, 11 tests
+npm test           # Vitest, 32 tests
 npm run lint
 npm run build      # type-checks with tsc --noEmit first, so test files are checked too
 ```
@@ -79,7 +79,7 @@ Packages under `dev.stevejones.trackit`, organised by feature rather than by lay
   parameters, so the SPA can use `?type=movie`).
 
 Flyway owns the schema (`src/main/resources/db/migration`); Hibernate's `ddl-auto` is `none`.
-**Never edit an applied migration** — add `V4__…sql` instead.
+**Never edit an applied migration** — add `V5__…sql` instead.
 
 Sessions are stored in Postgres via Spring Session JDBC, so restarting `api` doesn't sign everyone
 out. `V2__spring_session.sql` creates those tables and `initialize-schema` is `never`, keeping
@@ -116,12 +116,20 @@ sorted `Pageable` would silently override all of it.
 a `text/plain` body, and gets its bearer token from `IgdbTokenStore`, which caches a Twitch
 client-credentials token in memory and refreshes it once on a 401. Game ids are checked against
 `\d{1,19}` and search terms are stripped of quotes and semicolons before going into a query body.
+TMDB ids are checked against `\d{1,10}`, since they become a path segment (`550/credits` would
+otherwise file the wrong thing in the shared catalogue).
+
+Credentials stay out of URLs, because a transport failure's message quotes the URL and the cause of
+a `ProviderException` is logged. The Twitch secret goes in a form body; `TMDB_API_KEY` may be the
+v4 Read Access Token (sent as a Bearer header, and preferred) or the v3 key, which only works in the
+query string, so `TmdbProvider` logs the underlying I/O error rather than the exception quoting it.
 
 `recommendationsFor` takes **all** seeds at once, not one at a time: IGDB expands `similar_games`
 for a whole set of ids in a single request, while TMDB needs one call per title. A batch signature
-lets the efficient provider actually be efficient. Note also that TMDB's recommendation endpoints
-accept no `include_adult` parameter, unlike search, so `adult` results are filtered in
-`TmdbProvider` instead.
+lets the efficient provider actually be efficient. For TMDB, a seed that fails (say, a title TMDB has
+since removed) is skipped rather than failing the batch; only all of them failing is an error. Note
+also that TMDB's recommendation endpoints accept no `include_adult` parameter, unlike search, so
+`adult` results are filtered in `TmdbProvider` instead.
 
 Every provider failure becomes a `ProviderException` whose message is written to be shown to the
 user as-is ("Set `TMDB_API_KEY`, or add the title by hand") and surfaces as a 503. **With no keys
@@ -149,7 +157,9 @@ back, and keeps track of *why* each suggestion is there. Four decisions worth ke
   TTL. Scoring something new changes the fingerprint and so refreshes suggestions at once rather
   than leaving the user waiting out the TTL. If a provider is down and a cached payload exists, the
   stale list is served rather than an error; an unreadable payload (the record shape changed under
-  an old row) is treated as a miss and recomputed, not a 500 on every request.
+  an old row) is treated as a miss and recomputed, not a 500 on every request. Tracked titles are
+  filtered out of every response, cached ones included: adding something without scoring it leaves
+  the fingerprint alone, so the cached list can still contain it.
 
 ### API shape
 
@@ -166,16 +176,31 @@ All under `/api`, all JSON, all errors as `{error, message, details?}`.
 | `GET`/`PUT`/`DELETE` | `/entries/{id}` | |
 | `PATCH` | `/entries/{id}/status` | The grid's quick status change. |
 | `GET` | `/recommendations?type=&refresh=` | Built from your best-scored titles. Cached per user and type. |
-| `GET` | `/stats` | Gap-filled buckets. |
+| `GET` | `/stats?tz=` | Gap-filled buckets. `tz` is the browser's IANA zone (UTC if absent), used to bucket finishes by month. |
 
 `PUT /entries/{id}` replaces **every** editable field — a `null` clears it. There is no partial
 patch, so the client always sends the whole editable set; `PATCH /entries/{id}/status` exists for the
 one case that can't. One exception to "null clears": moving an entry *into* `COMPLETED` with no
-`finishedOn` fills in today, since the stats page counts completions by month and a finished entry
-with no date would quietly go missing. Clearing the date on an already-finished entry still clears
-it.
+`finishedAt` records the current moment, since the stats page counts completions by month and a
+finished entry with no date would quietly go missing. Clearing the date on an already-finished entry
+still clears it.
+
+`finishedAt` is a `timestamptz` (an instant), not a date: "today" on the server's UTC clock was the
+wrong day for anyone finishing something late in the evening. Which day an instant falls on is
+decided where it's shown: `ItemPage` converts to the local day for its date input (a newly picked
+day is stored as local midday; an untouched one keeps its exact moment), and `/stats` buckets in the
+`tz` the SPA sends. Only region ids are accepted for `tz`: Java takes `+05:00` too, but Postgres
+reads offsets with POSIX's inverted sign. `startedOn` is still a plain date, since the server never
+fills it in. `V4` converted existing dates to midday UTC, which is the same day from UTC-12 to UTC+11.
 
 Another user's entry id returns **404, not 403**, so ids can't be enumerated.
+
+`EntryService.create` is deliberately **not** `@Transactional`. Postgres aborts a transaction on a
+constraint violation, so recovering from a lost insert race (a double-clicked Add) only works if the
+catalogue insert and the entry insert each run in their own transaction; a lost entry race becomes a
+409. `GlobalExceptionHandler` also maps any other `DataIntegrityViolationException` to 409 as a
+backstop. Deleting a hand-typed entry deletes its catalogue row too, since nothing else can point at
+it.
 
 ### `frontend/` — Vite 8, React 19, TypeScript, Tailwind 4
 
@@ -216,7 +241,7 @@ Dark by deliberate choice, built around the artwork. The rules, which are worth 
 
 ## Testing
 
-Backend (65 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
+Backend (76 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
 **singleton container pattern** on purpose. JUnit's `@Testcontainers`/`@Container` pair stops the
 container when the first test class finishes, leaving every class after it talking to a dead
 database; a static initialiser that never stops it avoids that. `TmdbProviderTest` and
@@ -225,7 +250,7 @@ and need no database or network. `RecommendationApiTest` stubs `MetadataProvider
 `@MockitoBean` on purpose: what the providers return is the provider tests' job, and what matters at
 that level is the scoring, the exclusions and the caching.
 
-Frontend (19 tests): Vitest + React Testing Library, with MSW stubbing the API
+Frontend (32 tests): Vitest + React Testing Library, with MSW stubbing the API
 (`src/test/server.ts`). `npm run build` type-checks test files too, so a type error in a test breaks
 the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
 

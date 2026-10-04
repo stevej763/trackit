@@ -52,8 +52,9 @@ public class Entry {
     @Column(name = "started_on")
     private LocalDate startedOn;
 
-    @Column(name = "finished_on")
-    private LocalDate finishedOn;
+    /** The moment it was finished; the calendar day depends on the viewer's zone. */
+    @Column(name = "finished_at")
+    private Instant finishedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -117,12 +118,12 @@ public class Entry {
         this.startedOn = startedOn;
     }
 
-    public LocalDate getFinishedOn() {
-        return finishedOn;
+    public Instant getFinishedAt() {
+        return finishedAt;
     }
 
-    public void setFinishedOn(LocalDate finishedOn) {
-        this.finishedOn = finishedOn;
+    public void setFinishedAt(Instant finishedAt) {
+        this.finishedAt = finishedAt;
     }
 
     public Instant getCreatedAt() {

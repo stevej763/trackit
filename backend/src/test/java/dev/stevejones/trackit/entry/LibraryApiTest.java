@@ -17,8 +17,17 @@ import dev.stevejones.trackit.IntegrationTest;
 import dev.stevejones.trackit.auth.AppUser;
 import dev.stevejones.trackit.auth.AppUserPrincipal;
 import dev.stevejones.trackit.auth.AppUserRepository;
+import dev.stevejones.trackit.media.MediaItem;
 import dev.stevejones.trackit.media.MediaItemRepository;
+import dev.stevejones.trackit.media.MetadataSource;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -72,6 +81,20 @@ class LibraryApiTest extends IntegrationTest {
         return objectMapper.readTree(response).get("id").asLong();
     }
 
+    /** A provider title already in the shared catalogue, so adding it needs no network. */
+    private void catalogueDune() {
+        MediaItem dune = new MediaItem();
+        dune.setSource(MetadataSource.TMDB);
+        dune.setMediaType(dev.stevejones.trackit.media.MediaType.MOVIE);
+        dune.setExternalId("693134");
+        dune.setTitle("Dune: Part Two");
+        mediaItems.save(dune);
+    }
+
+    private Instant finishedAtOf(String response) throws Exception {
+        return Instant.parse(objectMapper.readTree(response).get("finishedAt").asText());
+    }
+
     private List<String> titlesFrom(String query) throws Exception {
         String response = mockMvc.perform(as(steve, get("/api/entries" + query)))
                 .andExpect(status().isOk())
@@ -104,18 +127,19 @@ class LibraryApiTest extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"status":"COMPLETED","rating":9,"review":"Holds up.",
-                                 "startedOn":"2026-09-01","finishedOn":"2026-09-02"}"""))
+                                 "startedOn":"2026-09-01","finishedAt":"2026-09-02T21:30:00+01:00"}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rating").value(9))
                 .andExpect(jsonPath("$.review").value("Holds up."))
-                .andExpect(jsonPath("$.finishedOn").value("2026-09-02"));
+                // An instant: the offset it was sent with is normalised to UTC.
+                .andExpect(jsonPath("$.finishedAt").value("2026-09-02T20:30:00Z"));
 
         // Null clears, which is how the detail form removes a score.
         mockMvc.perform(as(steve, put("/api/entries/" + id))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"status":"COMPLETED","rating":null,"review":null,
-                                 "startedOn":null,"finishedOn":null}"""))
+                                 "startedOn":null,"finishedAt":null}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rating").value((Object) null))
                 .andExpect(jsonPath("$.review").value((Object) null));
@@ -134,38 +158,49 @@ class LibraryApiTest extends IntegrationTest {
     }
 
     @Test
-    void datesTodayWhenSomethingIsFinishedFromTheGrid() throws Exception {
+    void recordsTheMomentWhenSomethingIsFinishedFromTheGrid() throws Exception {
         long id = addManual(steve, "GAME", "IN_PROGRESS", "Hades", 2020);
+        Instant before = Instant.now().minusSeconds(1);
 
-        mockMvc.perform(as(steve, patch("/api/entries/" + id + "/status"))
+        String response = mockMvc.perform(as(steve, patch("/api/entries/" + id + "/status"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"status":"COMPLETED"}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.finishedOn").value(java.time.LocalDate.now().toString()));
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        // A moment, not the server's idea of today's date: which day that is
+        // depends on where the user is.
+        assertThat(finishedAtOf(response)).isBetween(before, Instant.now());
     }
 
     @Test
-    void datesTodayWhenFinishedWithoutADateButKeepsALaterClearing() throws Exception {
+    void recordsTheMomentWhenFinishedWithoutADateButKeepsALaterClearing() throws Exception {
         long id = addManual(steve, "MOVIE", "WANT", "Arrival", 2016);
+        Instant before = Instant.now().minusSeconds(1);
 
-        // Flipping to finished without touching the date field: today is meant,
+        // Flipping to finished without touching the date field: now is meant,
         // and the stats page counts completions by month, so it needs one.
-        mockMvc.perform(as(steve, put("/api/entries/" + id))
+        String response = mockMvc.perform(as(steve, put("/api/entries/" + id))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"status":"COMPLETED","rating":8}"""))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.finishedOn").value(java.time.LocalDate.now().toString()));
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(finishedAtOf(response)).isBetween(before, Instant.now());
 
         // Clearing it afterwards is an explicit choice and must stick.
         mockMvc.perform(as(steve, put("/api/entries/" + id))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"status":"COMPLETED","rating":8,"finishedOn":null}"""))
+                                {"status":"COMPLETED","rating":8,"finishedAt":null}"""))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.finishedOn").value((Object) null));
+                .andExpect(jsonPath("$.finishedAt").value((Object) null));
     }
 
     @Test
@@ -198,12 +233,12 @@ class LibraryApiTest extends IntegrationTest {
         addManual(steve, "TV", "WANT", "Unscored one", 2022);
         addManual(steve, "GAME", "WANT", "Unscored two", 2020);
 
-        // finishedOn is given explicitly: omitting it means "clear it", which is
+        // finishedAt is given explicitly: omitting it means "clear it", which is
         // the contract this very test would otherwise be relying on by accident.
         mockMvc.perform(as(steve, put("/api/entries/" + scored))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"status":"COMPLETED","rating":7,"finishedOn":"2026-09-30"}"""))
+                                {"status":"COMPLETED","rating":7,"finishedAt":"2026-09-30T20:00:00Z"}"""))
                 .andExpect(status().isOk());
 
         // Postgres would put NULLs first on a descending sort; the scored entry
@@ -261,6 +296,43 @@ class LibraryApiTest extends IntegrationTest {
     }
 
     @Test
+    void answersADoubleSubmittedAddWithAConflictNotAServerError() throws Exception {
+        catalogueDune();
+
+        String body = """
+                {"mediaType":"MOVIE","status":"WANT","source":"TMDB","externalId":"693134"}""";
+        int attempts = 6;
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(attempts);
+        List<Future<Integer>> statuses = new ArrayList<>();
+        try {
+            for (int i = 0; i < attempts; i++) {
+                statuses.add(pool.submit(() -> {
+                    start.await();
+                    return mockMvc.perform(as(steve, post("/api/entries"))
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(body))
+                            .andReturn()
+                            .getResponse()
+                            .getStatus();
+                }));
+            }
+            start.countDown();
+
+            List<Integer> codes = new ArrayList<>();
+            for (Future<Integer> status : statuses) {
+                codes.add(status.get(30, TimeUnit.SECONDS));
+            }
+            // Whichever way each request lost (the existence check or the unique
+            // constraint), it is a 409, never a 500.
+            assertThat(codes).containsOnlyOnce(201).containsOnly(201, 409);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(entries.count()).isEqualTo(1);
+    }
+
+    @Test
     void needsEitherAProviderReferenceOrManualDetails() throws Exception {
         mockMvc.perform(as(steve, post("/api/entries"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -305,12 +377,32 @@ class LibraryApiTest extends IntegrationTest {
 
     @Test
     void removesAnEntryButLeavesTheSharedCatalogueAlone() throws Exception {
-        long id = addManual(steve, "MOVIE", "WANT", "Arrival", 2016);
+        catalogueDune();
+        String response = mockMvc.perform(as(steve, post("/api/entries"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"mediaType":"MOVIE","status":"WANT","source":"TMDB","externalId":"693134"}"""))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        long id = objectMapper.readTree(response).get("id").asLong();
 
         mockMvc.perform(as(steve, delete("/api/entries/" + id))).andExpect(status().isNoContent());
         mockMvc.perform(as(steve, get("/api/entries/" + id))).andExpect(status().isNotFound());
 
         assertThat(entries.count()).isZero();
         assertThat(mediaItems.count()).isEqualTo(1);
+    }
+
+    @Test
+    void removesAHandTypedTitleAlongWithItsEntry() throws Exception {
+        // Nothing else can point at a manual catalogue row, so it would be an orphan.
+        long id = addManual(steve, "MOVIE", "WANT", "Arrival", 2016);
+
+        mockMvc.perform(as(steve, delete("/api/entries/" + id))).andExpect(status().isNoContent());
+
+        assertThat(entries.count()).isZero();
+        assertThat(mediaItems.count()).isZero();
     }
 }

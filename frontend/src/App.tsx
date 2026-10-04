@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { ApiError } from './api/client';
 import { AuthProvider } from './auth/AuthProvider';
 import RequireAuth from './auth/RequireAuth';
 import AppShell from './components/AppShell';
@@ -15,7 +16,10 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      // A 4xx won't change on a second try, and retrying a 401 only delays the
+      // trip back to the sign-in page.
+      retry: (failureCount, error) =>
+        failureCount < 1 && !(error instanceof ApiError && error.status < 500),
       staleTime: 30 * 1000,
     },
   },

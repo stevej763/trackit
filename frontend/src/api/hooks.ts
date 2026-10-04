@@ -67,6 +67,21 @@ export function useRecommendations(type: MediaType) {
   });
 }
 
+/**
+ * The Refresh button. A plain refetch would ask for the same URL and get the
+ * server's cache back, so this asks for a rebuild and files the answer under
+ * the usual key, where useRecommendations picks it up.
+ */
+export function useRefreshRecommendations(type: MediaType) {
+  const queryClient = useQueryClient();
+  return () =>
+    queryClient.fetchQuery({
+      queryKey: queryKeys.recommendations(type),
+      queryFn: () => api.recommendations(type, true),
+      staleTime: 0,
+    });
+}
+
 /** Anything that changes an entry invalidates the library, that entry, and the stats. */
 function useEntryMutation<TArgs>(
   mutationFn: (args: TArgs) => Promise<Entry | void>,

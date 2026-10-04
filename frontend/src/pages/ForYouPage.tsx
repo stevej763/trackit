@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
-import { useCreateEntry, useRecommendations } from '../api/hooks';
+import { useCreateEntry, useRecommendations, useRefreshRecommendations } from '../api/hooks';
 import type { EntryStatus, MediaType, Recommendation } from '../api/types';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
@@ -22,12 +22,17 @@ import {
  * saying out loud why each thing is here, because a recommendation you can't
  * account for is just noise.
  */
+/** TMDB numbers films and shows separately, so an id alone can name two titles. */
+const keyOf = (recommendation: Recommendation) =>
+  `${recommendation.mediaType}:${recommendation.externalId}`;
+
 export default function ForYouPage() {
   const [type, setType] = useState<MediaType>('MOVIE');
   const [status, setStatus] = useState<EntryStatus>('WANT');
   const [added, setAdded] = useState<string[]>([]);
 
-  const { data, isPending, isFetching, error, refetch } = useRecommendations(type);
+  const { data, isPending, isFetching, error } = useRecommendations(type);
+  const refresh = useRefreshRecommendations(type);
   const createEntry = useCreateEntry();
 
   const add = (recommendation: Recommendation) => {
@@ -38,7 +43,7 @@ export default function ForYouPage() {
         source: recommendation.source,
         externalId: recommendation.externalId,
       },
-      { onSuccess: () => setAdded((previous) => [...previous, recommendation.externalId]) },
+      { onSuccess: () => setAdded((previous) => [...previous, keyOf(recommendation)]) },
     );
   };
 
@@ -160,7 +165,8 @@ export default function ForYouPage() {
                 </p>
                 <Button
                   variant="quiet"
-                  onClick={() => void refetch()}
+                  // A failure lands in the query's own error state, shown above.
+                  onClick={() => void refresh().catch(() => undefined)}
                   disabled={isFetching}
                   className="py-1 text-sm"
                 >
@@ -170,7 +176,7 @@ export default function ForYouPage() {
 
               <ul className="flex flex-col divide-y divide-edge border-y border-edge">
                 {data.items.map((recommendation) => (
-                  <li key={`${recommendation.source}-${recommendation.externalId}`}>
+                  <li key={`${recommendation.source}-${keyOf(recommendation)}`}>
                     <TitleRow
                       title={recommendation.title}
                       releaseYear={recommendation.releaseYear}
@@ -187,7 +193,7 @@ export default function ForYouPage() {
                         </>
                       }
                       action={
-                        added.includes(recommendation.externalId) ? (
+                        added.includes(keyOf(recommendation)) ? (
                           <span className="text-sm text-paper-dim">Added</span>
                         ) : (
                           <Button

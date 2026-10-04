@@ -28,7 +28,7 @@ searching for them. To get artwork and details automatically, fill these in
 
 | Variable | Where to get it |
 | --- | --- |
-| `TMDB_API_KEY` | Sign up at [themoviedb.org](https://www.themoviedb.org/signup), then **Settings → API → Create** and request a Developer key. Copy the 32-character **API Key (v3 auth)**, not the longer read access token. |
+| `TMDB_API_KEY` | Sign up at [themoviedb.org](https://www.themoviedb.org/signup), then **Settings → API → Create** and request a Developer key. Copy the long **API Read Access Token** (starts with `eyJ`), which is sent as a header and never appears in a URL or log. The 32-character **API Key (v3 auth)** also works. |
 | `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` | IGDB authenticates through Twitch. Create a Twitch account, turn on two-factor auth, then register an app at [dev.twitch.tv](https://dev.twitch.tv/console/apps/create) (redirect URL `http://localhost`, category "Application Integration"). The app's Client ID and a generated secret go here. |
 
 Both are free. TMDB covers films and TV; IGDB covers games.
@@ -68,7 +68,7 @@ cache and nothing else.
 ## Running the tests
 
 ```sh
-docker compose run --rm api-test          # backend: 65 tests, no local Java needed
+docker compose run --rm api-test          # backend: 76 tests, no local Java needed
 cd frontend && npm install && npm test    # frontend: Vitest + React Testing Library
 cd frontend && npm run lint && npm run build
 ```

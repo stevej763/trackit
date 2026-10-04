@@ -1,9 +1,10 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../test/render';
-import { entriesRequests } from '../test/server';
+import { entriesRequests, makeEntry, server } from '../test/server';
 import LibraryPage from './LibraryPage';
 
 /** Surfaces the router's query string so we can assert the URL is the source of truth. */
@@ -15,6 +16,8 @@ function renderLibrary(route = '/') {
   return renderWithProviders(
     <>
       <LocationProbe />
+      {/* Stands in for the app shell's own Library link. */}
+      <Link to="/">Library</Link>
       <Routes>
         <Route path="/" element={<LibraryPage />} />
       </Routes>
@@ -62,5 +65,49 @@ describe('LibraryPage filters', () => {
   it('describes how many titles matched', async () => {
     renderLibrary();
     expect(await screen.findByText('1 title')).toBeInTheDocument();
+  });
+
+  it('clears the search when the Library link is followed', async () => {
+    renderLibrary('/?q=dune');
+    const box = await screen.findByRole('searchbox', { name: 'Search your library' });
+    expect(box).toHaveValue('dune');
+
+    await userEvent.click(screen.getByRole('link', { name: 'Library' }));
+
+    expect(box).toHaveValue('');
+    // Past the debounce, the old term must not have been written back.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(screen.getByTestId('search').textContent).toBe('');
+  });
+
+  it('still writes a typed search into the URL', async () => {
+    renderLibrary();
+    const box = await screen.findByRole('searchbox', { name: 'Search your library' });
+
+    await userEvent.type(box, 'sev');
+
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toContain('q=sev'));
+    expect(box).toHaveValue('sev');
+  });
+
+  it('steps back to the last page when the one it was on empties', async () => {
+    server.use(
+      http.get('/api/entries', ({ request }) => {
+        const page = Number(new URL(request.url).searchParams.get('page'));
+        // Two pages of results, so page 3 (index 2) is past the end.
+        return HttpResponse.json({
+          items: page === 1 ? [makeEntry()] : [],
+          page,
+          size: 48,
+          totalItems: 49,
+          totalPages: 2,
+        });
+      }),
+    );
+    renderLibrary('/?page=2');
+
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe('?page=1'));
+    expect(await screen.findByText('Page 2 of 2')).toBeInTheDocument();
+    expect(screen.queryByText('Your library is empty')).not.toBeInTheDocument();
   });
 });

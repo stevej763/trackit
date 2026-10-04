@@ -15,8 +15,11 @@ import dev.stevejones.trackit.auth.AppUserPrincipal;
 import dev.stevejones.trackit.auth.AppUserRepository;
 import dev.stevejones.trackit.entry.EntryRepository;
 import dev.stevejones.trackit.media.MediaItemRepository;
+import java.time.Instant;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,14 +64,14 @@ class StatsApiTest extends IntegrationTest {
         return objectMapper.readTree(response).get("id").asLong();
     }
 
-    private void score(AppUserPrincipal principal, long id, int rating, String finishedOn) throws Exception {
+    private void score(AppUserPrincipal principal, long id, int rating, Instant finishedAt) throws Exception {
         mockMvc.perform(put("/api/entries/" + id)
                         .with(user(principal))
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"status":"COMPLETED","rating":%d,"finishedOn":"%s"}"""
-                                .formatted(rating, finishedOn)))
+                                {"status":"COMPLETED","rating":%d,"finishedAt":"%s"}"""
+                                .formatted(rating, finishedAt)))
                 .andExpect(status().isOk());
     }
 
@@ -89,13 +92,13 @@ class StatsApiTest extends IntegrationTest {
 
     @Test
     void countsByTypeStatusAndScore() throws Exception {
-        String today = LocalDate.now().format(DateTimeFormatter.ISO_DATE);
+        Instant now = Instant.now();
         long film = add(steve, "MOVIE", "WANT", "A film");
         long show = add(steve, "TV", "IN_PROGRESS", "A show");
         add(steve, "GAME", "WANT", "A game");
 
-        score(steve, film, 9, today);
-        score(steve, show, 7, today);
+        score(steve, film, 9, now);
+        score(steve, show, 7, now);
 
         mockMvc.perform(get("/api/stats").with(user(steve)))
                 .andExpect(jsonPath("$.totalItems").value(3))
@@ -117,9 +120,8 @@ class StatsApiTest extends IntegrationTest {
 
     @Test
     void countsOnlyTheRequestingUsersLibrary() throws Exception {
-        String today = LocalDate.now().format(DateTimeFormatter.ISO_DATE);
         long annaEntry = add(anna, "MOVIE", "WANT", "Anna's film");
-        score(anna, annaEntry, 10, today);
+        score(anna, annaEntry, 10, Instant.now());
         add(steve, "GAME", "WANT", "Steve's game");
 
         mockMvc.perform(get("/api/stats").with(user(steve)))
@@ -131,5 +133,39 @@ class StatsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.totalItems").value(1))
                 .andExpect(jsonPath("$.ratedItems").value(1))
                 .andExpect(jsonPath("$.averageRating").value(10.0));
+    }
+
+    @Test
+    void countsAFinishInTheMonthItFellInWhereTheUserIs() throws Exception {
+        // An hour into this month in Auckland is still last month in UTC, so
+        // the same moment belongs to a different month depending on the zone.
+        ZoneId auckland = ZoneId.of("Pacific/Auckland");
+        Instant finished = LocalDate.now(auckland).withDayOfMonth(1)
+                .atStartOfDay(auckland).plusHours(1).toInstant();
+        String aucklandMonth = YearMonth.from(finished.atZone(auckland)).toString();
+        String utcMonth = YearMonth.from(finished.atZone(ZoneOffset.UTC)).toString();
+
+        long film = add(steve, "MOVIE", "WANT", "A film");
+        score(steve, film, 8, finished);
+
+        mockMvc.perform(get("/api/stats?tz=Pacific/Auckland").with(user(steve)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finishedByMonth[?(@.key=='" + aucklandMonth + "')].count").value(1))
+                .andExpect(jsonPath("$.finishedByMonth[?(@.key=='" + utcMonth + "')].count").value(0));
+
+        mockMvc.perform(get("/api/stats").with(user(steve)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finishedByMonth[?(@.key=='" + utcMonth + "')].count").value(1));
+    }
+
+    @Test
+    void rejectsAnythingButANamedTimeZone() throws Exception {
+        // "+05:00" is a valid Java zone, but Postgres would read it with the
+        // opposite sign, so offsets are refused rather than silently misread.
+        for (String tz : new String[] {"Mars/Olympus_Mons", "+05:00"}) {
+            mockMvc.perform(get("/api/stats").param("tz", tz).with(user(steve)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("bad_request"));
+        }
     }
 }

@@ -118,7 +118,11 @@ export const api = {
   search: (query: string, type: MediaType) =>
     request<SearchResult[]>(`/search?q=${encodeURIComponent(query)}&type=${type.toLowerCase()}`),
 
-  stats: () => request<Stats>('/stats'),
+  // The browser's zone decides which month each finish falls in.
+  stats: () =>
+    request<Stats>(
+      `/stats?tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`,
+    ),
 
   recommendations: (type: MediaType, refresh = false) =>
     request<Recommendations>(
