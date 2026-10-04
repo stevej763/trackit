@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
-import { useDeleteEntry, useEntry, useUpdateEntry } from '../api/hooks';
-import type { Entry, EntryStatus, UpdateEntryPayload } from '../api/types';
+import {
+  useDeleteEntry,
+  useEntry,
+  useRefreshDetails,
+  useUpdateDetails,
+  useUpdateEntry,
+} from '../api/hooks';
+import type { Entry, EntryStatus, ManualDetails, MediaItem, UpdateEntryPayload } from '../api/types';
 import Button from '../components/Button';
 import Poster from '../components/Poster';
 import ScoreInput from '../components/ScoreInput';
@@ -141,6 +147,12 @@ export default function ItemPage() {
             </section>
           ) : null}
 
+          {item.source === 'MANUAL' ? (
+            <EditDetails entryId={entry.id} item={item} />
+          ) : (
+            <RefreshDetails entryId={entry.id} source={item.source} />
+          )}
+
           <section className="border-t border-edge pt-4">
             {confirmingDelete ? (
               <div>
@@ -277,5 +289,154 @@ function VerdictForm({
         </span>
       </div>
     </form>
+  );
+}
+
+/** The message to show for a failed mutation, preferring a field's own words. */
+function failureMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    return error.detail;
+  }
+  return fallback;
+}
+
+/**
+ * Re-fetches a provider title: a show's new seasons, a release year that has
+ * firmed up. The server skips the fetch if it made one minutes ago.
+ */
+function RefreshDetails({ entryId, source }: { entryId: number; source: string }) {
+  const refresh = useRefreshDetails(entryId);
+
+  return (
+    <section className="border-t border-edge pt-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <Button
+          variant="quiet"
+          onClick={() => refresh.mutate(undefined)}
+          disabled={refresh.isPending}
+        >
+          {refresh.isPending ? 'Refreshing...' : 'Refresh details'}
+        </Button>
+        <span role="status" className="text-sm text-paper-dim">
+          {refresh.isSuccess ? `Up to date with ${source}.` : ''}
+        </span>
+      </div>
+      {refresh.isError ? (
+        <p role="alert" className="mt-2 text-sm text-ember">
+          {failureMessage(refresh.error, 'Could not refresh the details.')}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** Corrects a hand-typed title, keeping the entry's score and review. */
+function EditDetails({ entryId, item }: { entryId: number; item: MediaItem }) {
+  const updateDetails = useUpdateDetails(entryId);
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(item.title);
+  const [year, setYear] = useState(item.releaseYear ? String(item.releaseYear) : '');
+  const [posterUrl, setPosterUrl] = useState(item.posterUrl ?? '');
+  const [overview, setOverview] = useState(item.overview ?? '');
+
+  const open = () => {
+    setTitle(item.title);
+    setYear(item.releaseYear ? String(item.releaseYear) : '');
+    setPosterUrl(item.posterUrl ?? '');
+    setOverview(item.overview ?? '');
+    updateDetails.reset();
+    setEditing(true);
+  };
+
+  const save = (event: React.FormEvent) => {
+    event.preventDefault();
+    // Every field is replaced, so the ones this form doesn't show go back as
+    // they are.
+    const details: ManualDetails = {
+      title,
+      releaseYear: year ? Number(year) : null,
+      overview: overview.trim() || null,
+      posterUrl: posterUrl.trim() || null,
+      backdropUrl: item.backdropUrl,
+      runtimeMinutes: item.runtimeMinutes,
+      seasonCount: item.seasonCount,
+      episodeCount: item.episodeCount,
+      platforms: item.platforms,
+      genres: item.genres,
+    };
+    updateDetails.mutate(details, { onSuccess: () => setEditing(false) });
+  };
+
+  if (!editing) {
+    return (
+      <section className="border-t border-edge pt-4">
+        <Button variant="quiet" onClick={open}>
+          Edit details
+        </Button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="border-t border-edge pt-4">
+      <form onSubmit={save} className="flex flex-col gap-4" aria-label="Details">
+        <label className="flex flex-col gap-1.5 text-sm">
+          Title
+          <input
+            className="field"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            required
+          />
+        </label>
+
+        <label className="flex w-28 flex-col gap-1.5 text-sm">
+          Year
+          <input
+            className="field"
+            type="number"
+            min={1850}
+            max={2200}
+            value={year}
+            onChange={(event) => setYear(event.target.value)}
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5 text-sm">
+          Artwork URL
+          <input
+            className="field"
+            type="url"
+            value={posterUrl}
+            onChange={(event) => setPosterUrl(event.target.value)}
+            placeholder="Optional"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5 text-sm">
+          What it&rsquo;s about
+          <textarea
+            className="field min-h-24 leading-relaxed"
+            value={overview}
+            onChange={(event) => setOverview(event.target.value)}
+          />
+        </label>
+
+        {updateDetails.isError ? (
+          <p role="alert" className="text-sm text-ember">
+            {failureMessage(updateDetails.error, 'Could not save the details.')}
+          </p>
+        ) : null}
+
+        <div className="flex gap-3">
+          <Button type="submit" disabled={updateDetails.isPending || !title.trim()}>
+            {updateDetails.isPending ? 'Saving...' : 'Save details'}
+          </Button>
+          <Button type="button" variant="quiet" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </section>
   );
 }

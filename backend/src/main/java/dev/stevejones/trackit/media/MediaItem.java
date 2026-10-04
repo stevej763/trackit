@@ -201,4 +201,22 @@ public class MediaItem {
     public Instant getCreatedAt() {
         return createdAt;
     }
+
+    /**
+     * Takes every descriptive field from a fresh fetch of the same title,
+     * leaving identity (id, source, type, external id) alone.
+     */
+    public void refreshFrom(MediaItem fetched) {
+        title = fetched.title;
+        releaseYear = fetched.releaseYear;
+        overview = fetched.overview;
+        posterUrl = fetched.posterUrl;
+        backdropUrl = fetched.backdropUrl;
+        runtimeMinutes = fetched.runtimeMinutes;
+        seasonCount = fetched.seasonCount;
+        episodeCount = fetched.episodeCount;
+        platforms = fetched.platforms;
+        genres = fetched.genres;
+        metadataFetchedAt = fetched.metadataFetchedAt;
+    }
 }

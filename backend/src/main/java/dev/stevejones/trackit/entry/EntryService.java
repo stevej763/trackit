@@ -6,12 +6,15 @@ import dev.stevejones.trackit.common.BadRequestException;
 import dev.stevejones.trackit.common.ConflictException;
 import dev.stevejones.trackit.common.NotFoundException;
 import dev.stevejones.trackit.entry.EntryDtos.CreateEntryRequest;
+import dev.stevejones.trackit.entry.EntryDtos.EntryResponse;
+import dev.stevejones.trackit.entry.EntryDtos.LibraryExport;
 import dev.stevejones.trackit.entry.EntryDtos.ManualItem;
 import dev.stevejones.trackit.entry.EntryDtos.UpdateEntryRequest;
 import dev.stevejones.trackit.media.MediaItem;
 import dev.stevejones.trackit.media.MediaItemRepository;
 import dev.stevejones.trackit.media.MediaType;
 import dev.stevejones.trackit.media.MetadataSource;
+import dev.stevejones.trackit.search.CatalogueRefresher;
 import dev.stevejones.trackit.search.MetadataProviders;
 import java.time.Instant;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -30,6 +33,7 @@ public class EntryService {
     private final MediaItemRepository mediaItems;
     private final AppUserRepository users;
     private final MetadataProviders providers;
+    private final CatalogueRefresher refresher;
     private final TransactionTemplate transactions;
 
     public EntryService(
@@ -37,11 +41,13 @@ public class EntryService {
             MediaItemRepository mediaItems,
             AppUserRepository users,
             MetadataProviders providers,
+            CatalogueRefresher refresher,
             TransactionTemplate transactions) {
         this.entries = entries;
         this.mediaItems = mediaItems;
         this.users = users;
         this.providers = providers;
+        this.refresher = refresher;
         this.transactions = transactions;
     }
 
@@ -149,6 +155,47 @@ public class EntryService {
         return entry;
     }
 
+    /**
+     * Corrects a hand-typed title's details, keeping the entry (and its score
+     * and review) as it is. Like {@link #update}, every field is replaced.
+     * Provider titles are shared and come from the provider; those refresh.
+     */
+    @Transactional
+    public Entry updateDetails(Long userId, Long entryId, ManualItem details) {
+        Entry entry = get(userId, entryId);
+        MediaItem item = entry.getMediaItem();
+        if (item.getSource() != MetadataSource.MANUAL) {
+            throw new BadRequestException(
+                    "Only titles added by hand can be edited. This one's details come from "
+                            + item.getSource() + "; refresh them instead.");
+        }
+        applyManualDetails(item, details);
+        return entry;
+    }
+
+    /**
+     * Fetches a provider title's details again. Deliberately not one
+     * transaction: the provider call holds no connection, and the catalogue
+     * update is a short transaction of its own.
+     */
+    public Entry refreshDetails(Long userId, Long entryId) {
+        Entry entry = get(userId, entryId);
+        if (entry.getMediaItem().getSource() == MetadataSource.MANUAL) {
+            throw new BadRequestException("This title was added by hand, so there's nowhere to refresh it from.");
+        }
+        refresher.refresh(entry.getMediaItem());
+        return get(userId, entryId);
+    }
+
+    @Transactional(readOnly = true)
+    public LibraryExport export(Long userId, String username) {
+        return new LibraryExport(
+                1,
+                username,
+                Instant.now(),
+                entries.findAllForExport(userId).stream().map(EntryResponse::from).toList());
+    }
+
     @Transactional
     public void delete(Long userId, Long entryId) {
         Entry entry = get(userId, entryId);
@@ -203,6 +250,11 @@ public class EntryService {
         MediaItem item = new MediaItem();
         item.setSource(MetadataSource.MANUAL);
         item.setMediaType(mediaType);
+        applyManualDetails(item, manual);
+        return item;
+    }
+
+    private static void applyManualDetails(MediaItem item, ManualItem manual) {
         item.setTitle(manual.title().trim());
         item.setReleaseYear(manual.releaseYear());
         item.setOverview(normalise(manual.overview()));
@@ -214,7 +266,6 @@ public class EntryService {
         item.setPlatforms(manual.platforms());
         item.setGenres(manual.genres());
         item.setMetadataFetchedAt(Instant.now());
-        return item;
     }
 
     /** Treats blank input as "no value", so empty strings don't fill the table. */

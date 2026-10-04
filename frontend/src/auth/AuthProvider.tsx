@@ -76,9 +76,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
   }, [queryClient]);
 
+  const deleteAccount = useCallback(
+    async (password: string) => {
+      await api.deleteAccount(password);
+      setUser(null);
+      queryClient.clear();
+    },
+    [queryClient],
+  );
+
   const value = useMemo<AuthState>(
-    () => ({ user, isLoading, signIn, signUp, signOut }),
-    [user, isLoading, signIn, signUp, signOut],
+    () => ({ user, isLoading, signIn, signUp, signOut, deleteAccount }),
+    [user, isLoading, signIn, signUp, signOut, deleteAccount],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

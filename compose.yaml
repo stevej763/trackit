@@ -34,6 +34,8 @@ services:
       IGDB_CLIENT_ID: ${IGDB_CLIENT_ID:-}
       IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET:-}
       TRACKIT_SECURE_COOKIE: ${TRACKIT_SECURE_COOKIE:-false}
+      TRACKIT_ALLOW_SIGNUP: ${TRACKIT_ALLOW_SIGNUP:-true}
+      TRACKIT_METADATA_REFRESH_CRON: ${TRACKIT_METADATA_REFRESH_CRON:-0 30 4 * * *}
       TRACKIT_LOG_LEVEL: ${TRACKIT_LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
@@ -52,6 +54,28 @@ services:
         condition: service_healthy
     ports:
       - "${TRACKIT_PORT:-8300}:80"
+
+  # A pg_dump every BACKUP_INTERVAL_HOURS into ./backups on the host, keeping
+  # BACKUP_KEEP_DAYS of them. Restoring is in backup/backup.sh. Copy ./backups
+  # somewhere off this machine too: a backup on the same disk isn't one.
+  backup:
+    image: postgres:16-alpine
+    container_name: trackit-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-trackit}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-trackit}
+      PGDATABASE: ${POSTGRES_DB:-trackit}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./backups:/backups
+      - ./backup/backup.sh:/usr/local/bin/trackit-backup:ro
+    entrypoint: ["sh", "/usr/local/bin/trackit-backup"]
 
   # Runs the backend test suite without needing Java on the host:
   #   docker compose run --rm api-test

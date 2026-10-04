@@ -26,10 +26,28 @@ public final class AuthDtos {
     }
 
     public record LoginRequest(
-            @NotBlank String username,
-            @NotBlank String password) {
+            @NotBlank @Size(max = 100) String username,
+            @NotBlank @Size(max = 500) String password) {
     }
 
     public record UserResponse(Long id, String username) {
+    }
+
+    /** What the sign-in page needs to know before anyone has signed in. */
+    public record AuthOptions(boolean signupAllowed) {
+    }
+
+    public record ChangePasswordRequest(
+            @NotBlank String currentPassword,
+
+            @NotBlank
+            @Size(min = 8, message = "Password must be at least 8 characters")
+            @MaxUtf8Bytes(value = 72, message = "Password is too long. Keep it under 72 characters, "
+                    + "or fewer if it uses accented letters or emoji")
+            String newPassword) {
+    }
+
+    /** Deleting an account asks for the password again, so an open laptop isn't enough. */
+    public record DeleteAccountRequest(@NotBlank String password) {
     }
 }

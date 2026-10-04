@@ -46,6 +46,12 @@ server:
     include-stacktrace: never
 
 trackit:
+  auth:
+    # false closes registration; existing accounts still sign in. Create yours first.
+    allow-signup: ${TRACKIT_ALLOW_SIGNUP:true}
+  metadata:
+    # Nightly re-fetch of catalogue details likely to have changed (UTC). "-" turns it off.
+    refresh-cron: ${TRACKIT_METADATA_REFRESH_CRON:0 30 4 * * *}
   tmdb:
     api-key: ${TMDB_API_KEY:}
     base-url: https://api.themoviedb.org/3

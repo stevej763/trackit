@@ -6,6 +6,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -47,6 +48,24 @@ public class GlobalExceptionHandler {
         log.warn("Constraint violation: {}", ex.getMostSpecificCause().getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("conflict", "That clashes with something that already exists. Reload and try again."));
+    }
+
+    @ExceptionHandler(FieldException.class)
+    public ResponseEntity<ApiError> onFieldProblem(FieldException ex) {
+        return ResponseEntity.badRequest().body(new ApiError(
+                "validation_failed", "Please check the highlighted fields", Map.of(ex.getField(), ex.getMessage())));
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ApiError> onForbidden(ForbiddenException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiError.of(ex.getCode(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ApiError> onTooManyRequests(TooManyRequestsException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(Math.max(1, ex.getRetryAfter().toSeconds())))
+                .body(ApiError.of("too_many_requests", ex.getMessage()));
     }
 
     @ExceptionHandler(BadRequestException.class)

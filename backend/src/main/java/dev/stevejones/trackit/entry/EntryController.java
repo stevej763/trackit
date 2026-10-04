@@ -5,6 +5,7 @@ import dev.stevejones.trackit.common.BadRequestException;
 import dev.stevejones.trackit.entry.EntryDtos.CreateEntryRequest;
 import dev.stevejones.trackit.entry.EntryDtos.EntryPage;
 import dev.stevejones.trackit.entry.EntryDtos.EntryResponse;
+import dev.stevejones.trackit.entry.EntryDtos.ManualItem;
 import dev.stevejones.trackit.entry.EntryDtos.UpdateEntryRequest;
 import dev.stevejones.trackit.entry.EntryDtos.UpdateStatusRequest;
 import dev.stevejones.trackit.media.MediaType;
@@ -105,6 +106,21 @@ public class EntryController {
             @PathVariable Long id,
             @Valid @RequestBody UpdateStatusRequest request) {
         return EntryResponse.from(service.updateStatus(principal.getId(), id, request.status()));
+    }
+
+    /** Corrects a hand-typed title's details. Replaces every field, like PUT /{id}. */
+    @PutMapping("/{id}/details")
+    public EntryResponse updateDetails(
+            @AuthenticationPrincipal AppUserPrincipal principal,
+            @PathVariable Long id,
+            @Valid @RequestBody ManualItem details) {
+        return EntryResponse.from(service.updateDetails(principal.getId(), id, details));
+    }
+
+    /** Fetches a provider title's details again: new seasons, a firmed-up release year. */
+    @PostMapping("/{id}/refresh")
+    public EntryResponse refreshDetails(@AuthenticationPrincipal AppUserPrincipal principal, @PathVariable Long id) {
+        return EntryResponse.from(service.refreshDetails(principal.getId(), id));
     }
 
     @DeleteMapping("/{id}")

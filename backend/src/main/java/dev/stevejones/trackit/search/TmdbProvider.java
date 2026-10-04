@@ -5,15 +5,23 @@ import dev.stevejones.trackit.media.MediaItem;
 import dev.stevejones.trackit.media.MediaType;
 import dev.stevejones.trackit.media.MetadataSource;
 import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -30,13 +38,27 @@ public class TmdbProvider implements MetadataProvider {
     /** TMDB ids are plain integers; anything else would rewrite the request path. */
     private static final Pattern NUMERIC_ID = Pattern.compile("\\d{1,10}");
 
+    /**
+     * How long a whole recommendations build may take. Seeds still outstanding
+     * then are skipped like any other failed seed, so one slow title costs its
+     * own suggestions rather than holding up the page.
+     */
+    static final Duration RECOMMENDATIONS_DEADLINE = Duration.ofSeconds(15);
+
     private final TmdbProperties properties;
     private final RestClient restClient;
+    private final Duration recommendationsDeadline;
 
+    @Autowired
     public TmdbProvider(TmdbProperties properties, RestClient.Builder providerRestClientBuilder) {
+        this(properties, providerRestClientBuilder, RECOMMENDATIONS_DEADLINE);
+    }
+
+    TmdbProvider(TmdbProperties properties, RestClient.Builder providerRestClientBuilder, Duration deadline) {
         this.properties = properties;
         // Clone: RestClient.Builder mutates in place, and this bean is shared.
         this.restClient = providerRestClientBuilder.clone().build();
+        this.recommendationsDeadline = deadline;
     }
 
     @Override
@@ -101,57 +123,98 @@ public class TmdbProvider implements MetadataProvider {
     }
 
     /**
-     * One call per seed: TMDB has no batch form. Seeds it has nothing for are
-     * skipped, and a failure on one seed doesn't lose the others: a title TMDB
-     * has since removed would otherwise break suggestions until its score
-     * dropped. Only when every seed fails is there nothing to show, and then
-     * the first failure is reported.
+     * One call per seed, since TMDB has no batch form, made in parallel on
+     * virtual threads so a cold build costs about one round trip rather than
+     * ten. Seeds it has nothing for are skipped, and a failure on one seed
+     * doesn't lose the others: a title TMDB has since removed would otherwise
+     * break suggestions until its score dropped. The same goes for a seed still
+     * outstanding at {@link #RECOMMENDATIONS_DEADLINE}. Only when every seed
+     * fails is there nothing to show, and then the first failure is reported.
      */
     @Override
     public Map<String, List<SearchResult>> recommendationsFor(MediaType mediaType, List<String> externalIds) {
         requireConfigured();
-        String segment = mediaType == MediaType.MOVIE ? "/movie/" : "/tv/";
-        Map<String, List<SearchResult>> bySeed = new LinkedHashMap<>();
         List<String> ids = externalIds.stream().filter(id -> NUMERIC_ID.matcher(id).matches()).toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, List<SearchResult>> bySeed = new LinkedHashMap<>();
         ProviderException firstFailure = null;
         int failures = 0;
 
-        for (String externalId : ids) {
-            JsonNode body;
-            try {
-                body = get(segment + externalId + "/recommendations", Map.of("page", "1"));
-            } catch (ProviderException ex) {
-                log.warn("Skipping recommendations for TMDB {} {}: {}", mediaType, externalId, ex.getMessage());
-                firstFailure = firstFailure == null ? ex : firstFailure;
-                failures++;
-                continue;
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            Map<String, Future<List<SearchResult>>> pending = new LinkedHashMap<>();
+            for (String externalId : ids) {
+                pending.put(externalId, executor.submit(() -> recommendationsForOne(mediaType, externalId)));
             }
-            List<SearchResult> results = new ArrayList<>();
 
-            for (JsonNode node : body.path("results")) {
-                // The recommendations endpoint takes no include_adult parameter,
-                // unlike search, so the filtering has to happen here.
-                if (node.path("adult").asBoolean(false)) {
-                    continue;
+            long deadline = System.nanoTime() + recommendationsDeadline.toNanos();
+            // Collected in seed order, which is best-scored first.
+            for (Map.Entry<String, Future<List<SearchResult>>> seed : pending.entrySet()) {
+                String externalId = seed.getKey();
+                try {
+                    List<SearchResult> results =
+                            seed.getValue().get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                    if (!results.isEmpty()) {
+                        bySeed.put(externalId, results);
+                    }
+                } catch (ExecutionException | TimeoutException ex) {
+                    ProviderException failure = asProviderFailure(ex);
+                    log.warn("Skipping recommendations for TMDB {} {}: {}",
+                            mediaType, externalId, failure.getMessage());
+                    firstFailure = firstFailure == null ? failure : firstFailure;
+                    failures++;
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new ProviderException("Gave up waiting for TMDB. Try again in a moment.", ex);
                 }
-                results.add(new SearchResult(
-                        MetadataSource.TMDB,
-                        mediaType,
-                        node.path("id").asText(),
-                        title(node, mediaType),
-                        year(node, mediaType),
-                        text(node, "overview"),
-                        imageUrl(properties.posterBaseUrl(), text(node, "poster_path")),
-                        null));
             }
-            if (!results.isEmpty()) {
-                bySeed.put(externalId, results);
-            }
+        } finally {
+            // Not close(): that waits for every task, which would undo the
+            // deadline. This interrupts the stragglers and returns at once.
+            executor.shutdownNow();
         }
-        if (failures > 0 && failures == ids.size()) {
+
+        if (failures == ids.size()) {
             throw firstFailure;
         }
         return bySeed;
+    }
+
+    private List<SearchResult> recommendationsForOne(MediaType mediaType, String externalId) {
+        String segment = mediaType == MediaType.MOVIE ? "/movie/" : "/tv/";
+        JsonNode body = get(segment + externalId + "/recommendations", Map.of("page", "1"));
+        List<SearchResult> results = new ArrayList<>();
+        for (JsonNode node : body.path("results")) {
+            // The recommendations endpoint takes no include_adult parameter,
+            // unlike search, so the filtering has to happen here.
+            if (node.path("adult").asBoolean(false)) {
+                continue;
+            }
+            results.add(new SearchResult(
+                    MetadataSource.TMDB,
+                    mediaType,
+                    node.path("id").asText(),
+                    title(node, mediaType),
+                    year(node, mediaType),
+                    text(node, "overview"),
+                    imageUrl(properties.posterBaseUrl(), text(node, "poster_path")),
+                    null));
+        }
+        return results;
+    }
+
+    private static ProviderException asProviderFailure(Exception ex) {
+        if (ex instanceof TimeoutException) {
+            return new ProviderException("TMDB is taking too long to answer. Try again in a moment.", ex);
+        }
+        Throwable cause = ex.getCause();
+        if (cause instanceof ProviderException providerException) {
+            return providerException;
+        }
+        return new ProviderException("Couldn't read TMDB's answer. Try again in a moment.", cause);
     }
 
     private void requireConfigured() {
@@ -191,7 +254,7 @@ public class TmdbProvider implements MetadataProvider {
         } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden ex) {
             throw new ProviderException("TMDB rejected the API key. Check TMDB_API_KEY.", ex);
         } catch (HttpClientErrorException.NotFound ex) {
-            throw new ProviderException("TMDB doesn't have that title any more.", ex);
+            throw new UnknownTitleException("TMDB doesn't have that title any more.", ex);
         } catch (HttpClientErrorException.TooManyRequests ex) {
             throw new ProviderException("TMDB is rate-limiting us. Try again in a moment.", ex);
         } catch (RestClientException ex) {

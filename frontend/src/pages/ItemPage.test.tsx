@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import type { UpdateEntryPayload } from '../api/types';
+import type { ManualDetails, UpdateEntryPayload } from '../api/types';
 import { renderWithProviders } from '../test/render';
 import { makeEntry, server } from '../test/server';
 import ItemPage from './ItemPage';
@@ -113,5 +113,83 @@ describe('ItemPage', () => {
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].finishedAt).toBe(new Date(2026, 8, 10, 12).toISOString());
     });
+  });
+
+  it('corrects a hand-typed title, sending back the fields it does not show', async () => {
+    let stored = makeEntry({
+      rating: 9,
+      mediaItem: {
+        ...makeEntry().mediaItem,
+        source: 'MANUAL',
+        externalId: null,
+        title: 'Arival',
+        releaseYear: 2061,
+        runtimeMinutes: 116,
+      },
+    });
+    let sent: ManualDetails | null = null;
+    server.use(
+      http.get('/api/entries/1', () => HttpResponse.json(stored)),
+      http.put('/api/entries/1/details', async ({ request }) => {
+        sent = (await request.json()) as ManualDetails;
+        stored = { ...stored, mediaItem: { ...stored.mediaItem, ...sent }, updatedAt: '2026-10-04T12:00:00Z' };
+        return HttpResponse.json(stored);
+      }),
+    );
+    renderItem();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit details' }));
+    const title = screen.getByLabelText('Title');
+    await userEvent.clear(title);
+    await userEvent.type(title, 'Arrival');
+    const year = screen.getByLabelText('Year');
+    await userEvent.clear(year);
+    await userEvent.type(year, '2016');
+    await userEvent.click(screen.getByRole('button', { name: 'Save details' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Arrival' })).toBeInTheDocument();
+    expect(sent).toMatchObject({ title: 'Arrival', releaseYear: 2016, runtimeMinutes: 116 });
+    // The verdict is untouched.
+    expect(screen.getByRole('radio', { name: '9 out of 10' })).toBeChecked();
+  });
+
+  it('refreshes a provider title rather than offering to edit it', async () => {
+    let refreshed = false;
+    server.use(
+      http.get('/api/entries/1', () => HttpResponse.json(makeEntry())),
+      http.post('/api/entries/1/refresh', () => {
+        refreshed = true;
+        return HttpResponse.json(
+          makeEntry({ mediaItem: { ...makeEntry().mediaItem, seasonCount: 3 } }),
+        );
+      }),
+    );
+    renderItem();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Refresh details' }));
+
+    expect(await screen.findByText('Up to date with TMDB.')).toBeInTheDocument();
+    expect(refreshed).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Edit details' })).not.toBeInTheDocument();
+  });
+
+  it('passes on why a refresh failed', async () => {
+    server.use(
+      http.get('/api/entries/1', () => HttpResponse.json(makeEntry())),
+      http.post('/api/entries/1/refresh', () =>
+        HttpResponse.json(
+          {
+            error: 'provider_unavailable',
+            message: 'Film and TV search is not configured. Set TMDB_API_KEY, or add the title by hand.',
+          },
+          { status: 503 },
+        ),
+      ),
+    );
+    renderItem();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Refresh details' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Set TMDB_API_KEY');
   });
 });

@@ -7,6 +7,11 @@ export interface User {
   username: string;
 }
 
+/** Settings the sign-in page needs before anyone has signed in. */
+export interface AuthOptions {
+  signupAllowed: boolean;
+}
+
 export interface MediaItem {
   id: number;
   mediaType: MediaType;
@@ -131,15 +136,27 @@ export interface UpdateEntryPayload {
   finishedAt: string | null;
 }
 
+/**
+ * A hand-typed title's details. When editing, every field is replaced, so the
+ * client sends the full set (see ItemPage's DetailsForm).
+ */
+export interface ManualDetails {
+  title: string;
+  releaseYear?: number | null;
+  overview?: string | null;
+  posterUrl?: string | null;
+  backdropUrl?: string | null;
+  runtimeMinutes?: number | null;
+  seasonCount?: number | null;
+  episodeCount?: number | null;
+  platforms?: string[] | null;
+  genres?: string[] | null;
+}
+
 export interface CreateEntryPayload {
   mediaType: MediaType;
   status: EntryStatus;
   source?: MetadataSource;
   externalId?: string;
-  manual?: {
-    title: string;
-    releaseYear?: number | null;
-    overview?: string | null;
-    posterUrl?: string | null;
-  };
+  manual?: ManualDetails;
 }

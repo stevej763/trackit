@@ -10,18 +10,36 @@ import type {
   Entry,
   EntryFilters,
   EntryStatus,
+  ManualDetails,
   MediaType,
   UpdateEntryPayload,
 } from './types';
 
 export const queryKeys = {
   me: ['me'] as const,
+  authOptions: ['auth-options'] as const,
   entries: (filters: EntryFilters) => ['entries', filters] as const,
   entry: (id: number) => ['entry', id] as const,
   stats: ['stats'] as const,
   search: (query: string, type: MediaType) => ['search', type, query] as const,
   recommendations: (type: MediaType) => ['recommendations', type] as const,
 };
+
+export function useAuthOptions() {
+  return useQuery({
+    queryKey: queryKeys.authOptions,
+    queryFn: api.authOptions,
+    // Server configuration: it changes on a restart, not while a page is open.
+    staleTime: Infinity,
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) =>
+      api.changePassword(currentPassword, newPassword),
+  });
+}
 
 export function useEntries(filters: EntryFilters) {
   return useQuery({
@@ -108,6 +126,14 @@ export function useCreateEntry() {
 
 export function useUpdateEntry(id: number) {
   return useEntryMutation((payload: UpdateEntryPayload) => api.updateEntry(id, payload));
+}
+
+export function useUpdateDetails(id: number) {
+  return useEntryMutation((details: ManualDetails) => api.updateEntryDetails(id, details));
+}
+
+export function useRefreshDetails(id: number) {
+  return useEntryMutation(() => api.refreshEntryDetails(id));
 }
 
 export function useUpdateStatus() {

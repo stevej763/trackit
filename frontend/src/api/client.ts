@@ -1,10 +1,12 @@
 import type {
   ApiErrorBody,
+  AuthOptions,
   CreateEntryPayload,
   Entry,
   EntryFilters,
   EntryPage,
   EntryStatus,
+  ManualDetails,
   MediaType,
   Recommendations,
   SearchResult,
@@ -25,6 +27,16 @@ export class ApiError extends Error {
     this.status = status;
     this.code = body.error;
     this.details = body.details ?? undefined;
+  }
+
+  /**
+   * The most specific thing to tell the user: a field's own message when
+   * there's exactly one, since "Please check the highlighted fields" means
+   * little on a form that doesn't highlight that field.
+   */
+  get detail(): string {
+    const messages = Object.values(this.details ?? {});
+    return messages.length === 1 ? messages[0] : this.message;
   }
 }
 
@@ -89,6 +101,17 @@ export const api = {
 
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
 
+  authOptions: () => request<AuthOptions>('/auth/options'),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/account/password', { method: 'PUT', ...json({ currentPassword, newPassword }) }),
+
+  deleteAccount: (password: string) =>
+    request<void>('/account', { method: 'DELETE', ...json({ password }) }),
+
+  /** A plain link target: the server sends it as a file download. */
+  exportUrl: '/api/account/export',
+
   listEntries: (filters: EntryFilters) => {
     const params = new URLSearchParams({
       sort: filters.sort,
@@ -112,6 +135,11 @@ export const api = {
 
   updateEntryStatus: (id: number, status: EntryStatus) =>
     request<Entry>(`/entries/${id}/status`, { method: 'PATCH', ...json({ status }) }),
+
+  updateEntryDetails: (id: number, details: ManualDetails) =>
+    request<Entry>(`/entries/${id}/details`, { method: 'PUT', ...json(details) }),
+
+  refreshEntryDetails: (id: number) => request<Entry>(`/entries/${id}/refresh`, { method: 'POST' }),
 
   deleteEntry: (id: number) => request<void>(`/entries/${id}`, { method: 'DELETE' }),
 

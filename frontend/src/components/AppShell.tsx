@@ -45,7 +45,15 @@ export default function AppShell() {
           </nav>
 
           <div className="ml-auto flex items-center gap-4 text-sm">
-            <span className="text-paper-dim">{user?.username}</span>
+            <NavLink
+              to="/account"
+              className={({ isActive }) =>
+                isActive ? 'text-paper' : 'text-paper-dim hover:text-paper'
+              }
+              aria-label={`Your account (${user?.username ?? ''})`}
+            >
+              {user?.username}
+            </NavLink>
             <button
               type="button"
               onClick={handleSignOut}

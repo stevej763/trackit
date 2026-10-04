@@ -80,7 +80,7 @@ public class IgdbProvider implements MetadataProvider {
 
         JsonNode games = postQuery("where id = %s; fields %s; limit 1;".formatted(externalId, DETAIL_FIELDS));
         if (games.isEmpty()) {
-            throw new ProviderException("IGDB doesn't have a game with that id.");
+            throw new UnknownTitleException("IGDB doesn't have a game with that id.");
         }
         JsonNode game = games.get(0);
 

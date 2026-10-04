@@ -405,4 +405,111 @@ class LibraryApiTest extends IntegrationTest {
         assertThat(entries.count()).isZero();
         assertThat(mediaItems.count()).isZero();
     }
+
+    @Test
+    void correctsAHandTypedTitleWithoutLosingTheVerdict() throws Exception {
+        long id = addManual(steve, "MOVIE", "COMPLETED", "Arival", 2061);
+        mockMvc.perform(as(steve, put("/api/entries/" + id))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"COMPLETED","rating":9,"review":"Heptapods."}"""))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(as(steve, put("/api/entries/" + id + "/details"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":" Arrival ","releaseYear":2016,"posterUrl":"https://example.com/arrival.jpg"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mediaItem.title").value("Arrival"))
+                .andExpect(jsonPath("$.mediaItem.releaseYear").value(2016))
+                .andExpect(jsonPath("$.mediaItem.posterUrl").value("https://example.com/arrival.jpg"))
+                .andExpect(jsonPath("$.rating").value(9))
+                .andExpect(jsonPath("$.review").value("Heptapods."));
+    }
+
+    @Test
+    void leavesAProviderTitlesDetailsToTheProvider() throws Exception {
+        // Shared by everyone tracking it, so one user mustn't rewrite it.
+        catalogueDune();
+        String response = mockMvc.perform(as(steve, post("/api/entries"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"mediaType":"MOVIE","status":"WANT","source":"TMDB","externalId":"693134"}"""))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long id = objectMapper.readTree(response).get("id").asLong();
+
+        mockMvc.perform(as(steve, put("/api/entries/" + id + "/details"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Something else"}"""))
+                .andExpect(status().isBadRequest());
+
+        assertThat(mediaItems.findAll()).extracting(MediaItem::getTitle).containsExactly("Dune: Part Two");
+    }
+
+    @Test
+    void acceptsOnlyWebAddressesForArtwork() throws Exception {
+        for (String url : List.of("javascript:alert(1)", "data:image/png;base64,AAAA", "ftp://example.com/a.jpg")) {
+            mockMvc.perform(as(steve, post("/api/entries"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                    "mediaType", "MOVIE",
+                                    "status", "WANT",
+                                    "manual", java.util.Map.of("title", "Arrival", "posterUrl", url)))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.details['manual.posterUrl']").exists());
+        }
+        assertThat(entries.count()).isZero();
+
+        // Blank still means "no artwork", and either scheme in any case is fine.
+        for (String url : List.of("", "HTTPS://example.com/a.jpg", "http://example.com/a.jpg")) {
+            mockMvc.perform(as(steve, post("/api/entries"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                    "mediaType", "MOVIE",
+                                    "status", "WANT",
+                                    "manual", java.util.Map.of("title", "Arrival " + url, "posterUrl", url)))))
+                    .andExpect(status().isCreated());
+        }
+    }
+
+    @Test
+    void hasNowhereToRefreshAHandTypedTitleFrom() throws Exception {
+        long id = addManual(steve, "MOVIE", "WANT", "Arrival", 2016);
+
+        mockMvc.perform(as(steve, post("/api/entries/" + id + "/refresh")))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void explainsThatRefreshingNeedsAProviderKey() throws Exception {
+        // The test context has no TMDB key: the refusal must happen before any
+        // request is made, and say what to do.
+        catalogueDune();
+        String response = mockMvc.perform(as(steve, post("/api/entries"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"mediaType":"MOVIE","status":"WANT","source":"TMDB","externalId":"693134"}"""))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long id = objectMapper.readTree(response).get("id").asLong();
+
+        mockMvc.perform(as(steve, post("/api/entries/" + id + "/refresh")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("TMDB_API_KEY")));
+    }
+
+    @Test
+    void refusesToEditOrRefreshSomeoneElsesEntry() throws Exception {
+        long annas = addManual(anna, "MOVIE", "WANT", "Arrival", 2016);
+
+        mockMvc.perform(as(steve, put("/api/entries/" + annas + "/details"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Mine now"}"""))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(as(steve, post("/api/entries/" + annas + "/refresh")))
+                .andExpect(status().isNotFound());
+    }
 }

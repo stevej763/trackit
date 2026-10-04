@@ -20,10 +20,22 @@ class AuthApiTest extends IntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired AppUserRepository users;
     @Autowired PasswordEncoder passwordEncoder;
+    @Autowired LoginThrottle throttle;
 
     @BeforeEach
     void clean() {
+        // One application context is shared across test classes, and with it
+        // the throttle's counts.
+        throttle.clear();
         users.deleteAll();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions signIn(String username, String password)
+            throws Exception {
+        return mockMvc.perform(post("/api/auth/login")
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"));
     }
 
     @Test
@@ -137,6 +149,60 @@ class AuthApiTest extends IntegrationTest {
 
         // Identical bodies, so the API can't be used to discover who has an account.
         assertThat(wrongPassword).isEqualTo(unknownUser);
+    }
+
+    @Test
+    void slowsDownRepeatedGuessesAtOnePassword() throws Exception {
+        users.save(new AppUser("steve", passwordEncoder.encode("therealpassword")));
+        users.save(new AppUser("anna", passwordEncoder.encode("annaspassword")));
+        for (int attempt = 0; attempt < LoginThrottle.FAILURES_PER_USERNAME; attempt++) {
+            signIn("steve", "guess" + attempt).andExpect(status().isUnauthorized());
+        }
+
+        // Refused before the password is even checked, so a right guess now
+        // looks the same as a wrong one.
+        signIn("Steve", "therealpassword")
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error").value("too_many_requests"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().exists("Retry-After"));
+
+        // Other accounts on the same address are unaffected.
+        signIn("anna", "annaspassword").andExpect(status().isOk());
+    }
+
+    @Test
+    void treatsAnOverlongPasswordAtSignInAsJustAWrongOne() throws Exception {
+        // Longer than BCrypt can hash; no account could have it, so it's a 401
+        // like any other wrong password, not a server error.
+        users.save(new AppUser("steve", passwordEncoder.encode("therealpassword")));
+
+        signIn("steve", "é".repeat(40)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void limitsSignUpsFromOneAddress() throws Exception {
+        for (int i = 0; i < LoginThrottle.SIGNUPS_PER_ADDRESS; i++) {
+            mockMvc.perform(post("/api/auth/register")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"username\":\"user" + i + "\",\"password\":\"longenoughpassword\"}"))
+                    .andExpect(status().isCreated());
+        }
+
+        mockMvc.perform(post("/api/auth/register")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"onemore","password":"longenoughpassword"}"""))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void offersSignUpByDefault() throws Exception {
+        mockMvc.perform(get("/api/auth/options"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.signupAllowed").value(true));
     }
 
     @Test

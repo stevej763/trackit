@@ -38,7 +38,8 @@ class TmdbProviderTest {
     @BeforeEach
     void setUp() {
         RestClient.Builder builder = RestClient.builder();
-        server = MockRestServiceServer.bindTo(builder).build();
+        // Seeds are fetched in parallel, so requests arrive in any order.
+        server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
         provider = new TmdbProvider(PROPERTIES, builder);
     }
 
@@ -249,6 +250,36 @@ class TmdbProviderTest {
 
         assertThat(bySeed).containsOnlyKeys("693134");
         server.verify();
+    }
+
+    @Test
+    void skipsASeedStillOutstandingAtTheDeadline() throws IOException {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer slowServer = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
+        TmdbProvider impatient = new TmdbProvider(PROPERTIES, builder, java.time.Duration.ofMillis(300));
+        String recommendations = fixture("tmdb-movie-recommendations.json");
+
+        slowServer.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/1/recommendations")))
+                .andRespond(request -> {
+                    try {
+                        Thread.sleep(5_000);
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw new java.net.SocketTimeoutException("Read timed out");
+                });
+        slowServer.expect(requestTo(org.hamcrest.Matchers.startsWith(
+                        "https://api.themoviedb.org/3/movie/693134/recommendations")))
+                .andRespond(withSuccess(recommendations, org.springframework.http.MediaType.APPLICATION_JSON));
+
+        long started = System.nanoTime();
+        Map<String, List<SearchResult>> bySeed =
+                impatient.recommendationsFor(MediaType.MOVIE, List.of("1", "693134"));
+
+        assertThat(bySeed).containsOnlyKeys("693134");
+        // The slow seed was abandoned, not waited out.
+        assertThat(java.time.Duration.ofNanos(System.nanoTime() - started)).isLessThan(java.time.Duration.ofSeconds(3));
     }
 
     @Test

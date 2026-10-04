@@ -72,6 +72,7 @@ export const entriesRequests: string[] = [];
 
 export const server = setupServer(
   http.get('/api/auth/me', () => HttpResponse.json(steve)),
+  http.get('/api/auth/options', () => HttpResponse.json({ signupAllowed: true })),
   http.get('/api/entries', ({ request }) => {
     entriesRequests.push(new URL(request.url).search);
     return HttpResponse.json(makePage([makeEntry()]));

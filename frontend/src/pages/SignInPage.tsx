@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../api/client';
+import { useAuthOptions } from '../api/hooks';
 import { useAuth } from '../auth/context';
 import AuthCard from '../components/AuthCard';
 import Button from '../components/Button';
@@ -13,6 +14,9 @@ export default function SignInPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Offered unless the server has said otherwise, so a slow answer doesn't
+  // make the link appear late on the usual, open setup.
+  const signupAllowed = useAuthOptions().data?.signupAllowed ?? true;
 
   if (user) {
     return <Navigate to="/" replace />;
@@ -39,12 +43,16 @@ export default function SignInPage() {
       heading="Sign in"
       intro="Pick up your library where you left it."
       footer={
-        <>
-          No account yet?{' '}
-          <Link to="/signup" className="text-lamp underline underline-offset-4">
-            Create one
-          </Link>
-        </>
+        signupAllowed ? (
+          <>
+            No account yet?{' '}
+            <Link to="/signup" className="text-lamp underline underline-offset-4">
+              Create one
+            </Link>
+          </>
+        ) : (
+          <>This server isn&rsquo;t taking new accounts. Ask whoever runs it to make you one.</>
+        )
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">

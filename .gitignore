@@ -1,6 +1,9 @@
 # Secrets
 .env
 
+# Database dumps from the backup service
+backups/
+
 # Java
 backend/target/
 *.class

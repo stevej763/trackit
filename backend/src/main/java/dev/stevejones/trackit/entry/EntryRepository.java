@@ -18,6 +18,10 @@ public interface EntryRepository extends JpaRepository<Entry, Long>, JpaSpecific
 
     boolean existsByUserIdAndMediaItemId(Long userId, Long mediaItemId);
 
+    /** The whole library, oldest first, for an export. */
+    @Query("select e from Entry e join fetch e.mediaItem where e.user.id = :userId order by e.createdAt, e.id")
+    List<Entry> findAllForExport(@Param("userId") Long userId);
+
     Optional<Entry> findByUserIdAndMediaItemId(Long userId, Long mediaItemId);
 
     /**

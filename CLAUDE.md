@@ -9,7 +9,8 @@ to, each with a status, a score out of 10 and a free-text review. Multi-user wit
 sign-in and open registration; every account's library, scores and reviews are private to it, while
 the catalogue of titles is shared so metadata is fetched once.
 
-Three services, composed: a Spring Boot API, PostgreSQL, and a React SPA served by nginx.
+Three services, composed: a Spring Boot API, PostgreSQL, and a React SPA served by nginx. A fourth,
+`backup`, runs `pg_dump` into `./backups` on an interval (`backup/backup.sh`, restore steps inside).
 
 ## Commands
 
@@ -44,7 +45,7 @@ Frontend without Docker (Node 20.19+):
 cd frontend
 npm install
 npm run dev        # :5173, proxies /api to localhost:8080 (see vite.config.ts)
-npm test           # Vitest, 32 tests
+npm test           # Vitest, 43 tests
 npm run lint
 npm run build      # type-checks with tsc --noEmit first, so test files are checked too
 ```
@@ -64,14 +65,17 @@ Packages under `dev.stevejones.trackit`, organised by feature rather than by lay
 
 - **`auth/`** — `AppUser` (username in a `citext` column, BCrypt hash), `AppUserPrincipal` (a
   `UserDetails` carrying the user id so handlers scope queries without a lookup), `AuthController`
-  (`/api/auth/register`, `/login`, `/me`). Logout is Spring Security's own filter, configured in
-  `SecurityConfig`.
+  (`/api/auth/register`, `/login`, `/me`, `/options`). Logout is Spring Security's own filter,
+  configured in `SecurityConfig`. `LoginThrottle` limits failed sign-ins per username and per
+  address, and sign-ups per address, in memory. `AccountController`/`AccountService` change the
+  password, export the library and delete the account.
 - **`media/`** — `MediaItem`, the shared catalogue row, deduplicated on
   `(source, mediaType, externalId)`.
 - **`entry/`** — `Entry`, one user's status/score/review for one `MediaItem`. `EntryService` holds
   the behaviour, `EntrySpecifications` the filtering and ordering.
 - **`search/`** — the `MetadataProvider` interface and its two implementations, plus
-  `MetadataProviders` which picks one by `MediaType`.
+  `MetadataProviders` which picks one by `MediaType`, and `CatalogueRefresher`, which re-fetches
+  catalogue rows on request and in a nightly `@Scheduled` job.
 - **`recommend/`** — suggestions built from highly-scored entries, plus the cache table behind them.
 - **`stats/`** — native-SQL aggregates for the stats page.
 - **`common/`** — `GlobalExceptionHandler` and the single `ApiError` response shape.
@@ -161,20 +165,52 @@ back, and keeps track of *why* each suggestion is there. Four decisions worth ke
   filtered out of every response, cached ones included: adding something without scoring it leaves
   the fingerprint alone, so the cached list can still contain it.
 
+### Provider calls never hold a database connection
+
+A provider call can take seconds (10 s read timeout), and the Hikari pool has 10 connections, so no
+code path calls TMDB or IGDB inside a transaction. `RecommendationService.forUser` reads a snapshot
+in one short read-only transaction, asks the providers with nothing open, and stores the result in a
+second short one, re-reading the cache row rather than trusting the detached one. `EntryService.create`
+and `refreshDetails` are likewise not `@Transactional`. `TmdbProvider.recommendationsFor` fetches
+seeds in parallel on virtual threads with an overall deadline (`RECOMMENDATIONS_DEADLINE`, 15 s); a
+seed still outstanding then is skipped like a failed one, and the executor is `shutdownNow()`ed, not
+closed, because `close()` would wait the stragglers out.
+
+### Sign-in throttling and sign-up
+
+`LoginThrottle` counts failures in a fixed window per username (5 / 15 min, case-insensitive) and per
+address (20 / 15 min), and sign-ups per address (5 / hour). It throttles rather than locks out, so
+someone guessing at your username can delay you but not lock you out; a success clears the
+username's count but never the address's. Confirming a password on the account page goes through the
+same counts. The address is `getRemoteAddr()`, which Spring takes from the left-most
+`X-Forwarded-For`, so nginx **overwrites** that header with `$remote_addr` (and blanks `Forwarded`)
+rather than appending; otherwise a client could pick its own address. Behind another TLS proxy, use
+nginx's realip module. Counts live in memory and reset on restart, which is fine for one instance.
+Tests share an application context, so anything that signs in calls `throttle.clear()` first.
+
+`TRACKIT_ALLOW_SIGNUP=false` makes `/auth/register` a 403 `signup_closed`; `/auth/options` (public)
+tells the SPA, which then drops the "Create one" link.
+
 ### API shape
 
 All under `/api`, all JSON, all errors as `{error, message, details?}`.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| `POST` | `/auth/register` | Open; signs the new account straight in. 409 on a duplicate (case-insensitive). |
-| `POST` | `/auth/login`, `/auth/logout` | |
+| `POST` | `/auth/register` | Signs the new account straight in. 409 on a duplicate (case-insensitive), 403 `signup_closed` when sign-up is off, 429 when throttled. |
+| `POST` | `/auth/login`, `/auth/logout` | Login answers 429 with `Retry-After` when throttled. |
+| `GET` | `/auth/options` | Public. `{signupAllowed}`. |
+| `PUT` | `/account/password` | `{currentPassword, newPassword}`. Signs out every other session of the user. |
+| `GET` | `/account/export` | The whole library as a JSON download (`format: 1`). |
+| `DELETE` | `/account` | `{password}`. Deletes the user, their entries and hand-typed titles, ends every session, and issues a fresh CSRF token like logout. |
 | `GET` | `/auth/me` | 401 when anonymous — the SPA uses this on boot. |
 | `GET` | `/search?q=&type=movie\|tv\|game` | Provider search. Persists nothing; flags hits already in your library. |
 | `POST` | `/entries` | Either `{source, externalId}` or `{manual: {...}}`. |
 | `GET` | `/entries` | `type`, `status`, `minRating`, `q`, `sort`, `direction`, `page`, `size`. |
 | `GET`/`PUT`/`DELETE` | `/entries/{id}` | |
 | `PATCH` | `/entries/{id}/status` | The grid's quick status change. |
+| `PUT` | `/entries/{id}/details` | Hand-typed titles only (400 otherwise). Replaces every field, like `PUT /entries/{id}`. |
+| `POST` | `/entries/{id}/refresh` | Provider titles only. Re-fetches the shared row unless it was fetched in the last 10 minutes. |
 | `GET` | `/recommendations?type=&refresh=` | Built from your best-scored titles. Cached per user and type. |
 | `GET` | `/stats?tz=` | Gap-filled buckets. `tz` is the browser's IANA zone (UTC if absent), used to bucket finishes by month. |
 
@@ -194,6 +230,14 @@ reads offsets with POSIX's inverted sign. `startedOn` is still a plain date, sin
 fills it in. `V4` converted existing dates to midday UTC, which is the same day from UTC-12 to UTC+11.
 
 Another user's entry id returns **404, not 403**, so ids can't be enumerated.
+
+Hand-typed artwork URLs must be `http(s)` (`EntryDtos.WEB_ADDRESS`): they go straight into an
+`<img src>`. Provider titles can't be edited, since everyone tracking them shares the row; they
+refresh instead. The nightly refresh (`TRACKIT_METADATA_REFRESH_CRON`, `-` to disable) takes up to 50
+tracked provider rows older than a week that are TV, undated, or released since last year. It gives
+up on a media type after three failures in a row (no key, provider down) without stopping the other,
+and a title the provider no longer has (`UnknownTitleException`) is marked as checked so it can't
+sit at the head of the queue every night.
 
 `EntryService.create` is deliberately **not** `@Transactional`. Postgres aborts a transaction on a
 constraint violation, so recovering from a lost insert race (a double-clicked Add) only works if the
@@ -241,16 +285,19 @@ Dark by deliberate choice, built around the artwork. The rules, which are worth 
 
 ## Testing
 
-Backend (76 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
+Backend (109 tests): `IntegrationTest` is the base for anything needing the schema — it uses the
 **singleton container pattern** on purpose. JUnit's `@Testcontainers`/`@Container` pair stops the
 container when the first test class finishes, leaving every class after it talking to a dead
 database; a static initialiser that never stops it avoids that. `TmdbProviderTest` and
 `IgdbProviderTest` use `MockRestServiceServer` against fixtures in `src/test/resources/fixtures/`
 and need no database or network. `RecommendationApiTest` stubs `MetadataProviders` with
 `@MockitoBean` on purpose: what the providers return is the provider tests' job, and what matters at
-that level is the scoring, the exclusions and the caching.
+that level is the scoring, the exclusions and the caching; `CatalogueRefresherTest` does the same.
+`AccountApiTest` signs in for real and passes the `TRACKIT_SESSION` cookie around, because what it
+tests is mostly what happens to sessions. `TmdbProviderTest` binds `MockRestServiceServer` with
+`ignoreExpectOrder(true)` since seeds arrive in parallel.
 
-Frontend (32 tests): Vitest + React Testing Library, with MSW stubbing the API
+Frontend (43 tests): Vitest + React Testing Library, with MSW stubbing the API
 (`src/test/server.ts`). `npm run build` type-checks test files too, so a type error in a test breaks
 the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
 
@@ -263,6 +310,10 @@ the build — which is how the `onUnhandledFrame` rename in MSW 3 got caught.
 - `citext` needs the extension, created in `V1__init.sql`. It's in the standard `postgres` image.
 - `MediaItem.genres`/`platforms` are `jsonb` mapped with `@JdbcTypeCode(SqlTypes.JSON)`, not
   Postgres arrays.
+- nginx drops inherited `add_header` directives from any block that sets one of its own, so every
+  such `location` in `nginx.conf` includes `security-headers.conf` again. The CSP allows images from
+  any `http(s)` address (hand-typed artwork) and nothing else off-origin; React's `style` props go
+  through the CSSOM, which `style-src 'self'` doesn't block.
 - `RestClient.Builder` mutates in place, so the providers each `clone()` the shared bean before
   setting a base URL.
 - Recommendations are only as good as the scores behind them, and a library added entirely by hand

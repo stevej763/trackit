@@ -257,7 +257,9 @@ function ManualEntry({
 
           {createEntry.isError ? (
             <p role="alert" className="text-sm text-ember">
-              {createEntry.error instanceof Error ? createEntry.error.message : 'Could not add that.'}
+              {createEntry.error instanceof ApiError
+                ? createEntry.error.detail
+                : 'Could not add that.'}
             </p>
           ) : null}
 

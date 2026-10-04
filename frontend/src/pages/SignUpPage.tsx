@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { ApiError } from '../api/client';
+import { useAuthOptions } from '../api/hooks';
 import { useAuth } from '../auth/context';
 import AuthCard from '../components/AuthCard';
 import Button from '../components/Button';
@@ -13,9 +14,29 @@ export default function SignUpPage() {
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const options = useAuthOptions();
 
   if (user) {
     return <Navigate to="/" replace />;
+  }
+
+  if (options.data && !options.data.signupAllowed) {
+    return (
+      <AuthCard
+        heading="Sign-ups are closed"
+        intro="This server isn't taking new accounts. Ask whoever runs it to make you one."
+        footer={
+          <>
+            Already have an account?{' '}
+            <Link to="/signin" className="text-lamp underline underline-offset-4">
+              Sign in
+            </Link>
+          </>
+        }
+      >
+        {null}
+      </AuthCard>
+    );
   }
 
   const onSubmit = async (event: React.FormEvent) => {

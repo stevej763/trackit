@@ -29,8 +29,10 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Suggests titles from the ones the user already rated highly.
@@ -39,6 +41,12 @@ import org.springframework.transaction.annotation.Transactional;
  * which derive it from far more behaviour than a personal library could ever
  * contain. This class picks the seeds, aggregates what comes back, and keeps
  * track of why each suggestion is there.
+ *
+ * <p>Deliberately not one transaction. A cold build waits on the providers
+ * (one TMDB call per seed), and holding a pooled connection open across that
+ * would let a handful of slow refreshes starve every other request. So the
+ * library is read in one short transaction, the providers are asked with no
+ * connection held, and the result is stored in another.
  */
 @Service
 public class RecommendationService {
@@ -58,35 +66,57 @@ public class RecommendationService {
     private final RecommendationCacheRepository caches;
     private final MetadataProviders providers;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate reads;
+    private final TransactionTemplate writes;
 
     public RecommendationService(
             EntryRepository entries,
             RecommendationCacheRepository caches,
             MetadataProviders providers,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            PlatformTransactionManager transactionManager) {
         this.entries = entries;
         this.caches = caches;
         this.providers = providers;
         this.objectMapper = objectMapper;
+        this.reads = new TransactionTemplate(transactionManager);
+        this.reads.setReadOnly(true);
+        this.writes = new TransactionTemplate(transactionManager);
     }
 
-    @Transactional
+    /** Everything the build needs from the database, read before any provider call. */
+    private record Snapshot(
+            List<Entry> seeds,
+            long ratedCount,
+            Optional<RecommendationCache> cached,
+            Set<String> alreadyTracked) {
+    }
+
+    private Snapshot snapshot(Long userId, MediaType mediaType) {
+        return reads.execute(status -> new Snapshot(
+                // The media item is fetch-joined, so these stay usable detached.
+                entries.findRecommendationSeeds(
+                        userId,
+                        mediaType,
+                        MINIMUM_SEED_RATING,
+                        MetadataSource.MANUAL,
+                        EntryStatus.DROPPED,
+                        PageRequest.of(0, MAX_SEEDS)),
+                entries.countByUserIdAndMediaItemMediaTypeAndRatingIsNotNull(userId, mediaType),
+                caches.findByUserIdAndMediaType(userId, mediaType),
+                // Read on every request, cached or not: adding a title without
+                // scoring it leaves the fingerprint alone, so a cached list can
+                // still contain it.
+                new HashSet<>(entries.findAllTrackedExternalIds(userId, mediaType))));
+    }
+
     public RecommendationsResponse forUser(Long userId, MediaType mediaType, boolean forceRefresh) {
-        List<Entry> seeds = entries.findRecommendationSeeds(
-                userId,
-                mediaType,
-                MINIMUM_SEED_RATING,
-                MetadataSource.MANUAL,
-                EntryStatus.DROPPED,
-                PageRequest.of(0, MAX_SEEDS));
-
-        long ratedCount = entries.countByUserIdAndMediaItemMediaTypeAndRatingIsNotNull(userId, mediaType);
+        Snapshot snapshot = snapshot(userId, mediaType);
+        List<Entry> seeds = snapshot.seeds();
+        long ratedCount = snapshot.ratedCount();
+        Optional<RecommendationCache> cached = snapshot.cached();
+        Set<String> alreadyTracked = snapshot.alreadyTracked();
         String fingerprint = fingerprintOf(seeds);
-        Optional<RecommendationCache> cached = caches.findByUserIdAndMediaType(userId, mediaType);
-
-        // Read on every request, cached or not: adding a title without scoring it
-        // leaves the fingerprint alone, so a cached list can still contain it.
-        Set<String> alreadyTracked = new HashSet<>(entries.findAllTrackedExternalIds(userId, mediaType));
 
         if (!forceRefresh && cached.isPresent() && isFresh(cached.get(), fingerprint)) {
             Optional<List<Recommendation>> items = deserialise(cached.get());
@@ -120,7 +150,7 @@ public class RecommendationService {
             throw ex;
         }
 
-        store(userId, mediaType, fingerprint, items, cached);
+        store(userId, mediaType, fingerprint, items);
         return new RecommendationsResponse(
                 mediaType, items, seeds.size(), ratedCount, MINIMUM_SEED_RATING, Instant.now(), false);
     }
@@ -165,25 +195,30 @@ public class RecommendationService {
         return items.stream().filter(item -> !alreadyTracked.contains(item.externalId())).toList();
     }
 
-    private void store(
-            Long userId,
-            MediaType mediaType,
-            String fingerprint,
-            List<Recommendation> items,
-            Optional<RecommendationCache> existing) {
-
+    /**
+     * Stores a fresh build. Failing here is never worth failing the request
+     * over: the user still gets their list, and the next visit rebuilds.
+     */
+    private void store(Long userId, MediaType mediaType, String fingerprint, List<Recommendation> items) {
         String payload;
         try {
             payload = objectMapper.writeValueAsString(items);
         } catch (Exception ex) {
-            // Not worth failing the request over: the user still gets their list.
             log.warn("Could not cache recommendations", ex);
             return;
         }
 
-        existing.ifPresentOrElse(
-                cache -> cache.replaceWith(fingerprint, payload),
-                () -> caches.save(new RecommendationCache(userId, mediaType, fingerprint, payload)));
+        try {
+            // Looked up again rather than reusing the snapshot's row: that one is
+            // detached, and the providers took long enough for it to have changed.
+            writes.executeWithoutResult(status -> caches.findByUserIdAndMediaType(userId, mediaType)
+                    .ifPresentOrElse(
+                            cache -> cache.replaceWith(fingerprint, payload),
+                            () -> caches.save(new RecommendationCache(userId, mediaType, fingerprint, payload))));
+        } catch (DataIntegrityViolationException ex) {
+            // Two first builds raced and the other one's row landed first.
+            log.debug("Concurrent recommendation build for user {} already cached", userId);
+        }
     }
 
     private boolean isFresh(RecommendationCache cache, String fingerprint) {

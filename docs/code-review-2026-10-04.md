@@ -91,22 +91,22 @@ B5 are the 500s.
 
 ## Improvements
 
-- [ ] **Move provider calls out of database transactions.** `RecommendationService.forUser` is
+- [x] **Move provider calls out of database transactions.** `RecommendationService.forUser` is
   `@Transactional` across up to 10 sequential TMDB calls (10 s timeout each), so it can hold a database
   connection for about 100 s; the default pool has 10. `EntryService.create` does the same on a smaller
   scale. Call the providers first, then open a short transaction. On Java 21, run the TMDB calls in
   parallel with virtual threads and an overall deadline.
-- [ ] **Login protection.** Registration is open and login has no rate limiting or lockout. Add a
+- [x] **Login protection.** Registration is open and login has no rate limiting or lockout. Add a
   per-IP/per-username throttle and a `TRACKIT_ALLOW_SIGNUP=false` switch for private instances.
-- [ ] **Account management.** No way to change your password or delete your account.
-- [ ] **Edit manual entries.** A typo in a hand-typed title means deleting it and losing the review.
+- [x] **Account management.** No way to change your password or delete your account.
+- [x] **Edit manual entries.** A typo in a hand-typed title means deleting it and losing the review.
   Also restrict the manual artwork URL to `http(s)`.
-- [ ] **Refresh metadata.** `metadata_fetched_at` is stored but never used, so TV season counts and
+- [x] **Refresh metadata.** `metadata_fetched_at` is stored but never used, so TV season counts and
   upcoming release years go stale. Add a "refresh details" action or a periodic job.
-- [ ] **Backups.** Postgres sits on a named volume with no backup story. Add a `pg_dump` cron sidecar,
+- [x] **Backups.** Postgres sits on a named volume with no backup story. Add a `pg_dump` cron sidecar,
   an export endpoint, or both.
-- [ ] **nginx security headers.** Add a CSP, `X-Content-Type-Options` and `Referrer-Policy`.
-- [ ] **Test gaps.** One seed failing among several; a double-submitted add; a password over 72 bytes;
+- [x] **nginx security headers.** Add a CSP, `X-Content-Type-Options` and `Referrer-Policy`.
+- [x] **Test gaps.** One seed failing among several; a double-submitted add; a password over 72 bytes;
   the For You refresh button.
 
 ## Feature ideas

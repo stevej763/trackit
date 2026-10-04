@@ -4,6 +4,7 @@ import { ApiError } from './api/client';
 import { AuthProvider } from './auth/AuthProvider';
 import RequireAuth from './auth/RequireAuth';
 import AppShell from './components/AppShell';
+import AccountPage from './pages/AccountPage';
 import AddPage from './pages/AddPage';
 import ForYouPage from './pages/ForYouPage';
 import ItemPage from './pages/ItemPage';
@@ -40,6 +41,7 @@ export default function App() {
                 <Route path="/for-you" element={<ForYouPage />} />
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/item/:id" element={<ItemPage />} />
+                <Route path="/account" element={<AccountPage />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

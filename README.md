@@ -17,8 +17,9 @@ docker compose up --build
 
 Open <http://localhost:8300>, create an account, and start adding things.
 
-Registration is open: anyone who can reach the app can create an account. That's
-fine on a home network; think twice before exposing it to the internet.
+Registration is open by default: anyone who can reach the app can create an
+account. Once your own accounts exist, set `TRACKIT_ALLOW_SIGNUP=false` to close
+it. Repeated failed sign-ins are throttled either way.
 
 ### API keys
 
@@ -40,6 +41,9 @@ Both are free. TMDB covers films and TV; IGDB covers games.
 | `TRACKIT_PORT` | `8300` | Host port the app is served on. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `trackit` | Change the password before putting this anywhere real. |
 | `TRACKIT_SECURE_COOKIE` | `false` | Set to `true` only behind HTTPS. A `Secure` cookie is dropped over plain HTTP, which makes signing in fail silently. |
+| `TRACKIT_ALLOW_SIGNUP` | `true` | `false` stops new accounts. Existing ones still sign in. |
+| `TRACKIT_METADATA_REFRESH_CRON` | `0 30 4 * * *` | When to re-fetch details likely to have changed (season counts, recent release years), in UTC. `-` turns it off. |
+| `BACKUP_INTERVAL_HOURS` / `BACKUP_KEEP_DAYS` | `24` / `14` | How often the backup service dumps the database, and how long dumps are kept. |
 | `TRACKIT_LOG_LEVEL` | `INFO` | `DEBUG` for more detail on provider calls. |
 
 ## What it does
@@ -61,6 +65,12 @@ Both are free. TMDB covers films and TV; IGDB covers games.
   hand-typed entries have nothing to match on.
 - **Stats.** Counts by type and status, how your scores are distributed, and what
   you finished each month over the last year.
+- **Details that keep up.** Shows and recent titles have their details re-fetched
+  nightly, and any provider title can be refreshed from its page. Hand-typed
+  titles can be edited without losing the score and review.
+- **Your account, your data.** Change your password (which signs you out
+  everywhere else), download your whole library as JSON, or delete the account
+  and everything in it.
 
 Accounts are fully separate: two people on the same instance share the metadata
 cache and nothing else.
@@ -68,18 +78,25 @@ cache and nothing else.
 ## Running the tests
 
 ```sh
-docker compose run --rm api-test          # backend: 76 tests, no local Java needed
+docker compose run --rm api-test          # backend: 109 tests, no local Java needed
 cd frontend && npm install && npm test    # frontend: Vitest + React Testing Library
 cd frontend && npm run lint && npm run build
 ```
 
 ## Backups
 
-Everything lives in the `db_data` volume.
+Everything lives in the `db_data` volume. The `backup` service writes a
+`pg_dump` of it to `./backups` when it starts and every 24 hours after that,
+keeping two weeks of dumps. Copy that folder somewhere off the machine too.
+
+To restore one:
 
 ```sh
-docker compose exec db pg_dump -U trackit trackit > trackit-$(date +%F).sql
+docker compose exec -T db pg_restore -U trackit -d trackit --clean --if-exists \
+  < backups/trackit-20261004T043000Z.dump
 ```
+
+Each user can also download their own library from the Account page.
 
 ## Development
 

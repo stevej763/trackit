@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -32,18 +33,27 @@ public final class EntryDtos {
             @Valid ManualItem manual) {
     }
 
+    /**
+     * A hand-typed title, when adding one or editing its details. Artwork must
+     * be a web address: it goes straight into an {@code <img src>}, and there's
+     * no reason to store a {@code data:} or {@code javascript:} one.
+     */
     public record ManualItem(
             @NotBlank @Size(max = 300) String title,
             @Min(1850) @Max(2200) Integer releaseYear,
             @Size(max = 5000) String overview,
-            @Size(max = 2000) String posterUrl,
-            @Size(max = 2000) String backdropUrl,
-            Integer runtimeMinutes,
-            Integer seasonCount,
-            Integer episodeCount,
-            List<String> platforms,
-            List<String> genres) {
+            @Size(max = 2000) @Pattern(regexp = WEB_ADDRESS, message = WEB_ADDRESS_MESSAGE) String posterUrl,
+            @Size(max = 2000) @Pattern(regexp = WEB_ADDRESS, message = WEB_ADDRESS_MESSAGE) String backdropUrl,
+            @Min(1) @Max(100_000) Integer runtimeMinutes,
+            @Min(1) @Max(1_000) Integer seasonCount,
+            @Min(1) @Max(100_000) Integer episodeCount,
+            @Size(max = 50) List<@NotBlank @Size(max = 100) String> platforms,
+            @Size(max = 50) List<@NotBlank @Size(max = 100) String> genres) {
     }
+
+    /** Blank, or http(s) followed by something; surrounding space is trimmed later. */
+    static final String WEB_ADDRESS = "^\\s*((?i:https?)://\\S+)?\\s*$";
+    static final String WEB_ADDRESS_MESSAGE = "Use a web address starting with http:// or https://";
 
     /**
      * Replaces every editable field. Null clears a value, so the client sends
@@ -84,6 +94,17 @@ public final class EntryDtos {
                     entry.getUpdatedAt(),
                     MediaItemResponse.from(entry.getMediaItem()));
         }
+    }
+
+    /**
+     * The whole library as one download. {@code format} versions the shape, so
+     * an importer can tell what it's reading.
+     */
+    public record LibraryExport(
+            int format,
+            String username,
+            Instant exportedAt,
+            List<EntryResponse> entries) {
     }
 
     /** A page of entries, flattened so the SPA doesn't depend on Spring's Page shape. */

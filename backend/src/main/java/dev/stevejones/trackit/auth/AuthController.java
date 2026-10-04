@@ -1,17 +1,21 @@
 package dev.stevejones.trackit.auth;
 
+import dev.stevejones.trackit.auth.AuthDtos.AuthOptions;
 import dev.stevejones.trackit.auth.AuthDtos.LoginRequest;
 import dev.stevejones.trackit.auth.AuthDtos.RegisterRequest;
 import dev.stevejones.trackit.auth.AuthDtos.UserResponse;
 import dev.stevejones.trackit.common.ConflictException;
+import dev.stevejones.trackit.common.ForbiddenException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -41,6 +45,8 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final SecurityContextRepository securityContextRepository;
     private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
+    private final LoginThrottle throttle;
+    private final boolean signupAllowed;
     private final SecurityContextHolderStrategy holderStrategy =
             SecurityContextHolder.getContextHolderStrategy();
 
@@ -49,21 +55,40 @@ public class AuthController {
             PasswordEncoder passwordEncoder,
             AuthenticationManager authenticationManager,
             SecurityContextRepository securityContextRepository,
-            SessionAuthenticationStrategy sessionAuthenticationStrategy) {
+            SessionAuthenticationStrategy sessionAuthenticationStrategy,
+            LoginThrottle throttle,
+            @Value("${trackit.auth.allow-signup:true}") boolean signupAllowed) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.securityContextRepository = securityContextRepository;
         this.sessionAuthenticationStrategy = sessionAuthenticationStrategy;
+        this.throttle = throttle;
+        this.signupAllowed = signupAllowed;
     }
 
-    /** Open registration, then log the new account straight in. */
+    /** Open to anyone, so the sign-in page knows whether to offer sign-up. */
+    @GetMapping("/options")
+    public AuthOptions options() {
+        return new AuthOptions(signupAllowed);
+    }
+
+    /**
+     * Registration, unless TRACKIT_ALLOW_SIGNUP is off, then log the new
+     * account straight in.
+     */
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public UserResponse register(
             @Valid @RequestBody RegisterRequest request,
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
+
+        if (!signupAllowed) {
+            throw new ForbiddenException("signup_closed",
+                    "This server isn't taking new accounts. Ask whoever runs it to make you one.");
+        }
+        throttle.checkSignUp(httpRequest.getRemoteAddr());
 
         AppUser user;
         try {
@@ -83,8 +108,17 @@ public class AuthController {
             HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
 
-        Authentication authentication =
-                establishSession(request.username(), request.password(), httpRequest, httpResponse);
+        String address = httpRequest.getRemoteAddr();
+        throttle.checkSignIn(request.username(), address);
+
+        Authentication authentication;
+        try {
+            authentication = establishSession(request.username(), request.password(), httpRequest, httpResponse);
+        } catch (AuthenticationException ex) {
+            throttle.signInFailed(request.username(), address);
+            throw ex;
+        }
+        throttle.signInSucceeded(request.username());
         AppUserPrincipal principal = (AppUserPrincipal) authentication.getPrincipal();
         return new UserResponse(principal.getId(), principal.getUsername());
     }
